@@ -20,6 +20,7 @@ import {
   vercel,
   type EdgeAdapter,
   type Principal,
+  type RequestHead,
 } from '../src/index.js';
 
 const HASH_KEY = 'k'.repeat(64);
@@ -33,7 +34,7 @@ const APP = 'app.example.test';
  */
 function edgeBefore(
   origin: (request: Request) => Response | Promise<Response>,
-  identify?: (request: Request) => Promise<Principal | null>,
+  identify?: (request: RequestHead) => Promise<Principal | null>,
 ) {
   const forwarded: Request[] = [];
   const events: IngestEvent[] = [];
@@ -87,6 +88,7 @@ const MARKDOWN = [
   '[Quickstart again](https://docs.example.test/guide/quickstart.md#usage)',
   '[The app](https://app.example.test/)',
   '[Agents](https://docs.example.test/wiki/Agent_(software).md) and https://docs.example.test/wiki/Agent_(software).md',
+  '[Deeper](https://docs.example.test/a_((b))/c.md) and https://docs.example.test/a_((b))/c.md',
   '[Elsewhere](https://elsewhere.example.test/x) and [this page](#top)',
 ].join('\n');
 
@@ -159,7 +161,8 @@ describe('the edge', () => {
   // is recorded in, or stops marking lane by lane: the engine would never
   // join the page to the step that followed it. Fails too if a section link
   // takes another section's fragment, or a link is cut at a parenthesis of
-  // its own: the agent would be sent somewhere else.
+  // its own, or marked part-way when its parentheses nest deeper than the
+  // pattern reads: the agent would be sent somewhere else.
   it("marks an agent-facing answer's links to the site, a lane each, which the engine joins to the request that follows one", async () => {
     const { send, events } = edgeBefore(
       () =>
@@ -186,6 +189,7 @@ describe('the edge', () => {
         `[Quickstart again](https://${DOCS}/guide/quickstart.md?h=${lanes[0] ?? ''}#usage)`,
         `[The app](https://${APP}/h/${lanes[2] ?? ''})`,
         `[Agents](https://${agents}) and https://${agents}`,
+        '[Deeper](https://docs.example.test/a_((b))/c.md) and https://docs.example.test/a_((b))/c.md',
         '[Elsewhere](https://elsewhere.example.test/x) and [this page](#top)',
       ].join('\n'),
     );
@@ -299,20 +303,19 @@ describe('the edge', () => {
     expect(events[2]?.session?.id).not.toBe(session);
   });
 
-  // Fails if someone sends an address or a principal's id as it is (they
-  // must leave the customer only as the workspace's keyed hash), or hands
-  // the site's check the request whose body the origin already read: the
-  // check would fail, and the request would go unrecorded.
+  // Fails if someone sends an address or a principal's id as it is: they
+  // must leave the customer only as the workspace's keyed hash. (The site's
+  // check reads only the request's head, so the body the origin read is
+  // out of its reach by type.)
   it('hashes the client address and the verified principal with the workspace key', async () => {
     const { send, events } = edgeBefore(
       async (request) => new Response(await request.text()),
-      async (request) => {
-        // A check that also looks in the body finds it empty, never spent.
-        expect(await request.text()).toBe('');
-        return request.headers.get('authorization') === 'Bearer t'
-          ? { kind: 'user', id: 'user-1', actingUserId: 'user-2' }
-          : null;
-      },
+      (request) =>
+        Promise.resolve(
+          request.headers.get('authorization') === 'Bearer t'
+            ? { kind: 'user', id: 'user-1', actingUserId: 'user-2' }
+            : null,
+        ),
     );
     await send(
       new Request(`https://${APP}/users/me`, {

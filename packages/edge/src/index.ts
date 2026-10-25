@@ -12,5 +12,6 @@ export {
   type EdgeAdapter,
   type EdgeOptions,
   type Principal,
+  type RequestHead,
 } from './edge.js';
 export { MARKER_PARAMETER, markLinks, type MarkedHosts } from './links.js';

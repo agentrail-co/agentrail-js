@@ -8,7 +8,7 @@ import {
   parseMarker,
   type IngestEvent,
 } from '@argus/journey-linkage';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import {
   MAX_LINK_INDEX,
@@ -24,12 +24,6 @@ import {
  * the engine; these prove the two have not drifted apart.
  */
 
-type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
-
-// Fails to compile if a field of the event the collector takes, or its type,
-// changes on one side only.
-const sameEvent: Exact<AgentrailEvent, IngestEvent> = true;
-
 function bytes(seed: number): Uint8Array {
   return Uint8Array.from(
     { length: 8 },
@@ -38,8 +32,11 @@ function bytes(seed: number): Uint8Array {
 }
 
 describe('agentrail core and the engine', () => {
+  // Fails to typecheck if a field of the event the collector takes, or its
+  // type, changes on one side only; fails if a surface is added on one side.
   it('describe one event, over the same surfaces', () => {
-    expect(sameEvent).toBe(true);
+    expectTypeOf<AgentrailEvent>().toExtend<IngestEvent>();
+    expectTypeOf<IngestEvent>().toExtend<AgentrailEvent>();
     expect([...SURFACES]).toEqual([...ENGINE_SURFACES]);
   });
 

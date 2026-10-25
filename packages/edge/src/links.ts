@@ -20,10 +20,12 @@ export type MarkedHosts = Readonly<Record<string, 'query' | 'path'>>;
 /**
  * An absolute link, or a Markdown link's target, in an answer's text. Either
  * may hold balanced parentheses one level deep (`/wiki/Agent_(software)`), so
- * a link is never cut short at a parenthesis of its own.
+ * a link is never cut short at a parenthesis of its own. A target in angle
+ * brackets (`[Guide](</guide.md>)`, which may hold spaces) is left as
+ * written; an absolute link inside one is still marked in place.
  */
 const LINK =
-  /(?<absolute>https?:\/\/(?:[^\s<>()"'`\]]|\([^\s<>()"'`\]]*\))+)|\]\((?<target>(?:[^()\s]|\([^()\s]*\))+)(?=[)\s])/gu;
+  /(?<absolute>https?:\/\/(?:[^\s<>()"'`\]]|\([^\s<>()"'`\]]*\))+)|\]\((?<target>(?!<)(?:[^()\s]|\([^()\s]*\))+)(?=[)\s])/gu;
 
 /** Punctuation that ends a sentence, not a bare link. */
 const TRAILING = /[.,;:!?]+$/u;

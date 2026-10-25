@@ -41,6 +41,12 @@ const MINTED_SESSION =
 /** The most of an agent-facing answer read to mark its links; a larger one passes as it came. */
 const MARKABLE_BYTES = 2 * 1024 * 1024;
 
+/**
+ * What the site's own check reads of a request: never its body, which has
+ * gone to the origin by the time the check runs.
+ */
+export type RequestHead = Pick<Request, 'method' | 'url' | 'headers'>;
+
 /** A verified identity the site's own check found; its ids are hashed before they leave. */
 export interface Principal {
   readonly kind: PrincipalKind;
@@ -61,11 +67,10 @@ export interface EdgeOptions {
   readonly sessionCookie?: string;
   /**
    * The verified principal behind a request, by the site's own check of its
-   * method, URL and headers. It runs after the answer, on a copy of the
-   * request without its body, which has gone to the origin.
+   * method, URL and headers. It runs after the answer.
    */
   readonly identify?: (
-    request: Request,
+    request: RequestHead,
   ) => Principal | null | Promise<Principal | null>;
   /** The service the events name; the request's host by default. */
   readonly service?: string;
@@ -257,7 +262,7 @@ export function createEdge(options: EdgeOptions): Edge {
   }
 
   async function eventOf(input: {
-    request: Request;
+    request: RequestHead;
     url: URL;
     address: string | null;
     instance: string | null;
@@ -381,10 +386,11 @@ export function createEdge(options: EdgeOptions): Edge {
       } as RequestInit);
 
       // What `identify` reads once the answer is sent: the body is the origin's.
-      const credentials = new Request(request.url, {
+      const head: RequestHead = {
         method: request.method,
-        headers: request.headers,
-      });
+        url: request.url,
+        headers: new Headers(request.headers),
+      };
       const cookie = cookieOf(request, sessionCookie);
       const kept = cookie !== null && MINTED_SESSION.test(cookie);
       const session = kept ? cookie : crypto.randomUUID();
@@ -422,7 +428,7 @@ export function createEdge(options: EdgeOptions): Edge {
           (async () => {
             collector.enqueue(
               await eventOf({
-                request: credentials,
+                request: head,
                 url,
                 address: adapter.clientAddress(request),
                 instance: adapter.instance,

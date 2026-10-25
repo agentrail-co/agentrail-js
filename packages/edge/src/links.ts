@@ -75,7 +75,16 @@ export function markLinks(
 
   const rewritten = body.replace(
     LINK,
-    (match, absolute: string | undefined, target: string | undefined) => {
+    (
+      match,
+      absolute: string | undefined,
+      target: string | undefined,
+      offset: number,
+    ) => {
+      // A bare link that runs on into a parenthesis it could not match, one
+      // nested deeper, is left whole rather than marked part-way.
+      if (absolute !== undefined && body[offset + match.length] === '(')
+        return match;
       // A sentence's full stop or comma after a bare link is not part of it.
       const trailing =
         absolute === undefined ? '' : (TRAILING.exec(absolute)?.[0] ?? '');

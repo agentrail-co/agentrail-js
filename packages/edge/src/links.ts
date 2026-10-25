@@ -17,9 +17,13 @@ export const MARKER_PARAMETER = 'h';
 /** How a host's links carry their lane. */
 export type MarkedHosts = Readonly<Record<string, 'query' | 'path'>>;
 
-/** An absolute link, or a Markdown link's target, in an answer's text. */
+/**
+ * An absolute link, or a Markdown link's target, in an answer's text. Either
+ * may hold balanced parentheses one level deep (`/wiki/Agent_(software)`), so
+ * a link is never cut short at a parenthesis of its own.
+ */
 const LINK =
-  /(?<absolute>https?:\/\/[^\s<>()"'`\]]+)|\]\((?<target>[^)\s]+)(?=[)\s])/gu;
+  /(?<absolute>https?:\/\/(?:[^\s<>()"'`\]]|\([^\s<>()"'`\]]*\))+)|\]\((?<target>(?:[^()\s]|\([^()\s]*\))+)(?=[)\s])/gu;
 
 /** Punctuation that ends a sentence, not a bare link. */
 const TRAILING = /[.,;:!?]+$/u;
@@ -44,6 +48,7 @@ export function markLinks(
   recorded: (url: URL) => string,
 ): Marked {
   const marker = newMarker();
+  /** Each address's lane; null past the last. A fragment is not part of it. */
   const lanes = new Map<string, string | null>();
   const linksOut: string[] = [];
 
@@ -51,21 +56,21 @@ export function markLinks(
     const mode = hosts[link.hostname.toLowerCase()];
     if (mode === undefined) return null;
     const address = `${link.host}${link.pathname}${link.search}`;
-    const known = lanes.get(address);
-    if (known !== undefined) return known;
-    if (lanes.size > MAX_LINK_INDEX) {
-      lanes.set(address, null);
-      return null;
+    let lane = lanes.get(address);
+    const first = lane === undefined;
+    if (lane === undefined) {
+      lane =
+        lanes.size > MAX_LINK_INDEX ? null : linkMarker(marker, lanes.size);
+      lanes.set(address, lane);
     }
-    const lane = linkMarker(marker, lanes.size);
+    if (lane === null) return null;
+    // Each link keeps its own fragment: one page's sections share its lane.
     const target = new URL(link);
     if (mode === 'query') target.searchParams.set(MARKER_PARAMETER, lane);
     else
       target.pathname = `/h/${lane}${target.pathname === '/' ? '' : target.pathname}`;
-    const written = target.href;
-    lanes.set(address, written);
-    linksOut.push(recorded(target));
-    return written;
+    if (first) linksOut.push(recorded(target));
+    return target.href;
   }
 
   const rewritten = body.replace(

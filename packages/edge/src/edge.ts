@@ -38,7 +38,7 @@ const PATH_MARKER = /^\/h\/([0-9A-Za-z]{16}|[0-9A-Za-z]{14})(?=\/|$)/u;
 /** What this edge mints for a session: a version 4 UUID. */
 const MINTED_SESSION =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-/** The largest agent-facing answer read to mark its links; larger pass as they are. */
+/** The most of an agent-facing answer read to mark its links; a larger one passes as it came. */
 const MARKABLE_BYTES = 2 * 1024 * 1024;
 
 /** A verified identity the site's own check found; its ids are hashed before they leave. */
@@ -59,7 +59,11 @@ export interface EdgeOptions {
   readonly queryAllowlist?: readonly string[];
   /** The session cookie's name. */
   readonly sessionCookie?: string;
-  /** The verified principal behind a request, by the site's own check. */
+  /**
+   * The verified principal behind a request, by the site's own check of its
+   * method, URL and headers. It runs after the answer, on a copy of the
+   * request without its body, which has gone to the origin.
+   */
   readonly identify?: (
     request: Request,
   ) => Principal | null | Promise<Principal | null>;
@@ -104,14 +108,57 @@ function cookieOf(request: Request, name: string): string | null {
   return null;
 }
 
-function isAgentFacing(url: URL, response: Response): boolean {
-  if (response.status < 200 || response.status >= 300) return false;
+/**
+ * An answer whose links are marked: a whole one (a `200` to a `GET`, so never
+ * a range) in Markdown, or `llms.txt` or a `.md` path served as text.
+ */
+function isAgentFacing(method: string, url: URL, response: Response): boolean {
+  if (method !== 'GET' || response.status !== 200) return false;
   const type = (response.headers.get('content-type') ?? '').toLowerCase();
   if (type.startsWith('text/markdown') || type.startsWith('text/x-markdown'))
     return true;
   return (
     type.startsWith('text/plain') &&
     /(?:\/llms(?:-full)?\.txt|\.md)$/u.test(url.pathname)
+  );
+}
+
+/**
+ * The answer's text, when it is at most `limit` bytes. A larger answer comes
+ * back as a response that sends what was read and then the rest, as it came.
+ */
+async function readUpTo(
+  response: Response,
+  body: ReadableStream<Uint8Array>,
+  limit: number,
+): Promise<string | Response> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const next = await reader.read();
+    if (next.done) break;
+    chunks.push(next.value);
+    size += next.value.byteLength;
+    if (size > limit) {
+      const rest = new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const chunk of chunks) controller.enqueue(chunk);
+        },
+        async pull(controller) {
+          const more = await reader.read();
+          if (more.done) controller.close();
+          else controller.enqueue(more.value);
+        },
+        cancel: (reason) => reader.cancel(reason),
+      });
+      return new Response(rest, response);
+    }
+  }
+  return (
+    chunks.map((chunk) => decoder.decode(chunk, { stream: true })).join('') +
+    decoder.decode()
   );
 }
 
@@ -152,15 +199,43 @@ export function createEdge(options: EdgeOptions): Edge {
     };
   }
 
+  /** A redirect's target as it is recorded: the allowlisted query only, no fragment. */
+  function recordedLocation(
+    location: string | null,
+    base: URL,
+  ): { location: string | null; redaction: string | null } {
+    if (location === null) return { location: null, redaction: null };
+    let target: URL;
+    try {
+      target = new URL(location, base);
+    } catch (error) {
+      // A target the edge cannot read, it cannot strip either: it stays here.
+      if (error instanceof TypeError)
+        return { location: null, redaction: 'unparsable' };
+      throw error;
+    }
+    const { path, dropped } = recordedPath(target);
+    return {
+      location: `${target.protocol}//${target.host}${path}`,
+      redaction: dropped ? 'query_outside_allowlist' : null,
+    };
+  }
+
   async function marked(
+    method: string,
     url: URL,
     response: Response,
     observed: Observed,
   ): Promise<Response> {
     const length = Number(response.headers.get('content-length') ?? '0');
-    if (!isAgentFacing(url, response) || length > MARKABLE_BYTES)
+    if (
+      !isAgentFacing(method, url, response) ||
+      response.body === null ||
+      length > MARKABLE_BYTES
+    )
       return response;
-    const text = await response.text();
+    const text = await readUpTo(response, response.body, MARKABLE_BYTES);
+    if (text instanceof Response) return text;
     const result = markLinks(text, url, hosts, (link) => {
       return `${link.host}${recordedPath(link).path}`;
     });
@@ -195,8 +270,10 @@ export function createEdge(options: EdgeOptions): Edge {
     observed: Observed;
   }): Promise<AgentrailEvent> {
     const { request, url, observed } = input;
-    const host = url.hostname.toLowerCase();
+    // With its port, as a link to it is recorded.
+    const host = url.host;
     const { path, dropped } = recordedPath(url);
+    const location = recordedLocation(observed.location, url);
     const principal = identify === undefined ? null : await identify(request);
     const actingUserId = principal?.actingUserId ?? null;
     return {
@@ -227,7 +304,7 @@ export function createEdge(options: EdgeOptions): Edge {
         host,
         path,
         status: observed.status,
-        location: observed.location,
+        location: location.location,
         contentType: observed.contentType,
         linksOut: [...observed.linksOut],
       },
@@ -268,6 +345,9 @@ export function createEdge(options: EdgeOptions): Edge {
         ...(dropped
           ? [{ field: 'http.path', reason: 'query_outside_allowlist' }]
           : []),
+        ...(location.redaction === null
+          ? []
+          : [{ field: 'http.location', reason: location.redaction }]),
       ],
     };
   }
@@ -300,6 +380,11 @@ export function createEdge(options: EdgeOptions): Edge {
         duplex: 'half',
       } as RequestInit);
 
+      // What `identify` reads once the answer is sent: the body is the origin's.
+      const credentials = new Request(request.url, {
+        method: request.method,
+        headers: request.headers,
+      });
       const cookie = cookieOf(request, sessionCookie);
       const kept = cookie !== null && MINTED_SESSION.test(cookie);
       const session = kept ? cookie : crypto.randomUUID();
@@ -311,8 +396,11 @@ export function createEdge(options: EdgeOptions): Edge {
         linksOut: [],
       };
       try {
+        // Links resolve against the address the origin answered for, so a
+        // relative one never carries the marker this request came with.
         const answer = await marked(
-          url,
+          request.method,
+          originUrl,
           await adapter.origin(forwarded),
           observed,
         );
@@ -334,7 +422,7 @@ export function createEdge(options: EdgeOptions): Edge {
           (async () => {
             collector.enqueue(
               await eventOf({
-                request,
+                request: credentials,
                 url,
                 address: adapter.clientAddress(request),
                 instance: adapter.instance,

@@ -33,7 +33,7 @@ const APP = 'app.example.test';
  */
 function edgeBefore(
   origin: (request: Request) => Response | Promise<Response>,
-  identify?: (request: Request) => Principal | null,
+  identify?: (request: Request) => Promise<Principal | null>,
 ) {
   const forwarded: Request[] = [];
   const events: IngestEvent[] = [];
@@ -83,24 +83,33 @@ function edgeBefore(
 
 const MARKDOWN = [
   '# Start here',
-  '[Quickstart](/guide/quickstart.md), then https://docs.example.test/api.md.',
-  '[Quickstart again](https://docs.example.test/guide/quickstart.md)',
+  '[Quickstart](/guide/quickstart.md#install), then https://docs.example.test/api.md.',
+  '[Quickstart again](https://docs.example.test/guide/quickstart.md#usage)',
   '[The app](https://app.example.test/)',
+  '[Agents](https://docs.example.test/wiki/Agent_(software).md) and https://docs.example.test/wiki/Agent_(software).md',
   '[Elsewhere](https://elsewhere.example.test/x) and [this page](#top)',
 ].join('\n');
 
 describe('the edge', () => {
   // Fails if someone passes the caller's traceparent on as our parent (a
-  // public endpoint's caller could then name any trace), or lets the
-  // origin see the markers it takes off.
+  // public endpoint's caller could then name any trace), lets the origin see
+  // the markers it takes off, resolves the answer's links against the
+  // marked address (each would carry the old marker inside the new), or
+  // records a host without the port its links keep.
   it('sends a request to its origin without its markers, under a trace of its own that links the caller', async () => {
-    const { send, forwarded, events } = edgeBefore(() => new Response('ok'));
+    const { send, forwarded, events } = edgeBefore(
+      () =>
+        new Response('[Next](next)', {
+          headers: { 'content-type': 'text/markdown' },
+        }),
+    );
     const caller = { traceId: newTraceId(), spanId: newSpanId() };
     const query = newMarker();
     const lane = linkMarker(newMarker(), 3);
-    await send(
+    const site = `${APP}:8443`;
+    const page = await send(
       new Request(
-        `https://${APP}/h/${lane}/items/projects?h=${query}&page=2&token=x`,
+        `https://${site}/h/${lane}/items/projects?h=${query}&page=2&token=x`,
         {
           headers: {
             traceparent: `00-${caller.traceId}-${caller.spanId}-01`,
@@ -114,7 +123,7 @@ describe('the edge', () => {
     const [event] = events;
     if (sent === undefined || event?.span == null)
       throw new Error('nothing sent');
-    expect(sent.url).toBe(`https://${APP}/items/projects?page=2&token=x`);
+    expect(sent.url).toBe(`https://${site}/items/projects?page=2&token=x`);
     expect(sent.headers.get('traceparent')).toBe(
       `00-${event.span.traceId}-${event.span.spanId}-01`,
     );
@@ -127,7 +136,7 @@ describe('the edge', () => {
     });
     expect(event.markers.seen).toEqual([query, lane]);
     expect(event.http).toMatchObject({
-      host: APP,
+      host: site,
       path: `/h/${lane}/items/projects?h=${query}&page=2`,
       status: 200,
     });
@@ -135,11 +144,22 @@ describe('the edge', () => {
       field: 'http.path',
       reason: 'query_outside_allowlist',
     });
+
+    // The answer's relative link, marked once, is recorded as a request for
+    // it is: the engine joins the two by that equality.
+    const next = `${site}/h/${linkMarker(event.markers.served[0]?.value ?? '', 0)}/items/next`;
+    expect(await page.text()).toBe(`[Next](https://${next})`);
+    expect(event.http?.linksOut).toEqual([next]);
+    await send(new Request(`https://${next}`));
+    const followed = events[1]?.http;
+    expect(`${followed?.host ?? ''}${followed?.path ?? ''}`).toBe(next);
   });
 
   // Fails if someone records a link in another form than a request for it
   // is recorded in, or stops marking lane by lane: the engine would never
-  // join the page to the step that followed it.
+  // join the page to the step that followed it. Fails too if a section link
+  // takes another section's fragment, or a link is cut at a parenthesis of
+  // its own: the agent would be sent somewhere else.
   it("marks an agent-facing answer's links to the site, a lane each, which the engine joins to the request that follows one", async () => {
     const { send, events } = edgeBefore(
       () =>
@@ -157,13 +177,15 @@ describe('the edge', () => {
     if (served?.http == null || marker === undefined)
       throw new Error('no marker served');
 
-    const lanes = [0, 1, 2].map((lane) => linkMarker(marker, lane));
+    const lanes = [0, 1, 2, 3].map((lane) => linkMarker(marker, lane));
+    const agents = `${DOCS}/wiki/Agent_(software).md?h=${lanes[3] ?? ''}`;
     expect(body).toBe(
       [
         '# Start here',
-        `[Quickstart](https://${DOCS}/guide/quickstart.md?h=${lanes[0] ?? ''}), then https://${DOCS}/api.md?h=${lanes[1] ?? ''}.`,
-        `[Quickstart again](https://${DOCS}/guide/quickstart.md?h=${lanes[0] ?? ''})`,
+        `[Quickstart](https://${DOCS}/guide/quickstart.md?h=${lanes[0] ?? ''}#install), then https://${DOCS}/api.md?h=${lanes[1] ?? ''}.`,
+        `[Quickstart again](https://${DOCS}/guide/quickstart.md?h=${lanes[0] ?? ''}#usage)`,
         `[The app](https://${APP}/h/${lanes[2] ?? ''})`,
+        `[Agents](https://${agents}) and https://${agents}`,
         '[Elsewhere](https://elsewhere.example.test/x) and [this page](#top)',
       ].join('\n'),
     );
@@ -173,9 +195,10 @@ describe('the edge', () => {
       `${DOCS}/guide/quickstart.md?h=${lanes[0] ?? ''}`,
       `${DOCS}/api.md?h=${lanes[1] ?? ''}`,
       `${APP}/h/${lanes[2] ?? ''}`,
+      agents,
     ]);
     expect(lanes.map((lane) => parseMarker(lane))).toEqual(
-      [0, 1, 2].map((index) => ({
+      [0, 1, 2, 3].map((index) => ({
         valid: true,
         base: marker.slice(0, 13),
         link: index,
@@ -199,17 +222,50 @@ describe('the edge', () => {
     );
   });
 
-  // Fails if someone reads and rewrites every answer: a page for people, or
-  // a stream, would be held up and changed.
-  it('passes an answer that is not agent-facing as it came', async () => {
-    const html = '<a href="https://docs.example.test/start">Start</a>';
-    const { send, events } = edgeBefore(
-      () => new Response(html, { headers: { 'content-type': 'text/html' } }),
-    );
-    const page = await send(new Request(`https://${DOCS}/start`));
-    expect(await page.text()).toBe(html);
-    expect(page.headers.get('cache-control')).toBeNull();
-    expect(events[0]?.markers.served).toEqual([]);
+  // Fails if someone reads and rewrites every answer (a page for people
+  // would be changed), drops the size bound (an answer of any size would be
+  // held in memory before the visitor got a byte), or marks a range or a
+  // bodyless answer (a range's bytes would no longer be its range; a 204
+  // cannot be given a body at all).
+  it('passes an answer it does not mark as it came', async () => {
+    const link = 'https://docs.example.test/start.md';
+    const markdown = { 'content-type': 'text/markdown' };
+    const answers: [string, () => Response][] = [
+      [
+        'a page for people',
+        () =>
+          new Response(`<a href="${link}">Start</a>`, {
+            headers: { 'content-type': 'text/html' },
+          }),
+      ],
+      [
+        'Markdown past the size bound, with no length given',
+        () =>
+          new Response(`[Start](${link})\n${'x'.repeat(2 * 1024 * 1024)}`, {
+            headers: markdown,
+          }),
+      ],
+      [
+        'a range of a Markdown page',
+        () =>
+          new Response(`[Start](${link})`, {
+            status: 206,
+            headers: { ...markdown, 'content-range': 'bytes 0-36/100' },
+          }),
+      ],
+      [
+        'no content',
+        () => new Response(null, { status: 204, headers: markdown }),
+      ],
+    ];
+    for (const [answer, origin] of answers) {
+      const { send, events } = edgeBefore(origin);
+      const page = await send(new Request(`https://${DOCS}/start.md`));
+      expect(await page.text(), answer).toBe(await origin().text());
+      expect(page.status, answer).toBe(origin().status);
+      expect(page.headers.get('cache-control'), answer).toBeNull();
+      expect(events[0]?.markers.served, answer).toEqual([]);
+    }
   });
 
   // Fails if someone marks the cookie HttpOnly (the browser script reads
@@ -243,14 +299,28 @@ describe('the edge', () => {
     expect(events[2]?.session?.id).not.toBe(session);
   });
 
-  // Fails if someone sends an address or a principal's id as it is: they
-  // must leave the customer only as the workspace's keyed hash.
+  // Fails if someone sends an address or a principal's id as it is (they
+  // must leave the customer only as the workspace's keyed hash), or hands
+  // the site's check the request whose body the origin already read: the
+  // check would fail, and the request would go unrecorded.
   it('hashes the client address and the verified principal with the workspace key', async () => {
     const { send, events } = edgeBefore(
-      () => new Response('ok'),
-      () => ({ kind: 'user', id: 'user-1', actingUserId: 'user-2' }),
+      async (request) => new Response(await request.text()),
+      async (request) => {
+        // A check that also looks in the body finds it empty, never spent.
+        expect(await request.text()).toBe('');
+        return request.headers.get('authorization') === 'Bearer t'
+          ? { kind: 'user', id: 'user-1', actingUserId: 'user-2' }
+          : null;
+      },
     );
-    await send(new Request(`https://${APP}/users/me`));
+    await send(
+      new Request(`https://${APP}/users/me`, {
+        method: 'POST',
+        headers: { authorization: 'Bearer t' },
+        body: 'name=Ada',
+      }),
+    );
     const [event] = events;
     expect(event?.actor.egress).toBe(await keyedHash(HASH_KEY, ADDRESS));
     expect(event?.principal).toEqual({
@@ -262,6 +332,23 @@ describe('the edge', () => {
       { field: 'actor.egress', reason: 'keyed_hash' },
       { field: 'principal.id', reason: 'keyed_hash' },
     ]);
+  });
+
+  // Fails if someone records a redirect's target as the origin wrote it: a
+  // code or a token in its query would leave the site, which the allowlist
+  // exists to stop.
+  it("records a redirect's target with the allowlisted query only, and redirects the visitor as the origin said", async () => {
+    const target = '/callback?code=secret&state=s1&page=2#done';
+    const { send, events } = edgeBefore(
+      () => new Response(null, { status: 302, headers: { location: target } }),
+    );
+    const answer = await send(new Request(`https://${APP}/login`));
+    expect(answer.headers.get('location')).toBe(target);
+    expect(events[0]?.http?.location).toBe(`https://${APP}/callback?page=2`);
+    expect(events[0]?.redactions).toContainEqual({
+      field: 'http.location',
+      reason: 'query_outside_allowlist',
+    });
   });
 
   // Fails if someone records only answered requests, or swallows the

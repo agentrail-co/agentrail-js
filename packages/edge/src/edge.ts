@@ -71,7 +71,7 @@ export interface EdgeOptions {
   readonly service?: string;
   /** Told of events that could not be sent. Logs by default. */
   readonly onError?: (error: Error) => void;
-  /** Stands in for the collector's fetch, in tests. */
+  /** The fetch the collector's calls go through; the platform's own by default. */
   readonly fetch?: typeof fetch;
 }
 

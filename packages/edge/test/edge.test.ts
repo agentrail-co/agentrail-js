@@ -90,6 +90,7 @@ const MARKDOWN = [
   '[Agents](https://docs.example.test/wiki/Agent_(software).md) and https://docs.example.test/wiki/Agent_(software).md',
   '[Deeper](https://docs.example.test/a_((b))/c.md) and https://docs.example.test/a_((b))/c.md',
   '[Elsewhere](https://elsewhere.example.test/x) and [this page](#top)',
+  '[Bracketed](</guide/quick start.md>) and [bracketed](<https://docs.example.test/api.md>)',
 ].join('\n');
 
 describe('the edge', () => {
@@ -162,7 +163,8 @@ describe('the edge', () => {
   // join the page to the step that followed it. Fails too if a section link
   // takes another section's fragment, or a link is cut at a parenthesis of
   // its own, or marked part-way when its parentheses nest deeper than the
-  // pattern reads: the agent would be sent somewhere else.
+  // pattern reads, or a destination in angle brackets is resolved with its
+  // brackets: the agent would be sent somewhere else.
   it("marks an agent-facing answer's links to the site, a lane each, which the engine joins to the request that follows one", async () => {
     const { send, events } = edgeBefore(
       () =>
@@ -180,25 +182,27 @@ describe('the edge', () => {
     if (served?.http == null || marker === undefined)
       throw new Error('no marker served');
 
-    const lanes = [0, 1, 2, 3].map((lane) => linkMarker(marker, lane));
-    const agents = `${DOCS}/wiki/Agent_(software).md?h=${lanes[3] ?? ''}`;
+    const lane = (index: number) => linkMarker(marker, index);
+    const lanes = [0, 1, 2, 3].map(lane);
+    const agents = `${DOCS}/wiki/Agent_(software).md?h=${lane(3)}`;
     expect(body).toBe(
       [
         '# Start here',
-        `[Quickstart](https://${DOCS}/guide/quickstart.md?h=${lanes[0] ?? ''}#install), then https://${DOCS}/api.md?h=${lanes[1] ?? ''}.`,
-        `[Quickstart again](https://${DOCS}/guide/quickstart.md?h=${lanes[0] ?? ''}#usage)`,
-        `[The app](https://${APP}/h/${lanes[2] ?? ''})`,
+        `[Quickstart](https://${DOCS}/guide/quickstart.md?h=${lane(0)}#install), then https://${DOCS}/api.md?h=${lane(1)}.`,
+        `[Quickstart again](https://${DOCS}/guide/quickstart.md?h=${lane(0)}#usage)`,
+        `[The app](https://${APP}/h/${lane(2)})`,
         `[Agents](https://${agents}) and https://${agents}`,
         '[Deeper](https://docs.example.test/a_((b))/c.md) and https://docs.example.test/a_((b))/c.md',
         '[Elsewhere](https://elsewhere.example.test/x) and [this page](#top)',
+        `[Bracketed](</guide/quick start.md>) and [bracketed](<https://${DOCS}/api.md?h=${lane(1)}>)`,
       ].join('\n'),
     );
     expect(page.headers.get('cache-control')).toBe('private, no-store');
     expect(page.headers.get('etag')).toBeNull();
     expect(served.http.linksOut).toEqual([
-      `${DOCS}/guide/quickstart.md?h=${lanes[0] ?? ''}`,
-      `${DOCS}/api.md?h=${lanes[1] ?? ''}`,
-      `${APP}/h/${lanes[2] ?? ''}`,
+      `${DOCS}/guide/quickstart.md?h=${lane(0)}`,
+      `${DOCS}/api.md?h=${lane(1)}`,
+      `${APP}/h/${lane(2)}`,
       agents,
     ]);
     expect(lanes.map((lane) => parseMarker(lane))).toEqual(
@@ -210,9 +214,7 @@ describe('the edge', () => {
     );
 
     // The agent follows the first link, from another session and address.
-    await send(
-      new Request(`https://${DOCS}/guide/quickstart.md?h=${lanes[0] ?? ''}`),
-    );
+    await send(new Request(`https://${DOCS}/guide/quickstart.md?h=${lane(0)}`));
     const tenant = 'workspace-1';
     const stamped = events.map((event) => ({
       ...event,

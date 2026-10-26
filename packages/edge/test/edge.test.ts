@@ -232,6 +232,20 @@ describe('the edge', () => {
     );
   });
 
+  // Fails if someone forwards a request without the visitor's signal: a
+  // visitor who went away would leave the origin working on an answer
+  // nobody reads.
+  it('tells the origin when the visitor goes away', async () => {
+    const visitor = new AbortController();
+    const { send, forwarded } = edgeBefore(() => new Response('ok'));
+    await send(
+      new Request(`https://${DOCS}/start`, { signal: visitor.signal }),
+    );
+    visitor.abort();
+
+    expect(forwarded[0]?.signal.aborted).toBe(true);
+  });
+
   // Fails if someone reads and rewrites every answer (a page for people
   // would be changed), drops the size bound (an answer of any size would be
   // held in memory before the visitor got a byte), or marks a range or a

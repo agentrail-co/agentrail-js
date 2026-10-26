@@ -381,6 +381,8 @@ export function createEdge(options: EdgeOptions): Edge {
         headers,
         body: request.body,
         redirect: 'manual',
+        // A visitor who goes away stops the origin's work too.
+        signal: request.signal,
         // A streamed body needs it; Workers and Node both take it.
         duplex: 'half',
       } as RequestInit);

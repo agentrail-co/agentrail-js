@@ -31,16 +31,21 @@ interface Sent {
 /**
  * The script on the test's page, with the collector and the site's API
  * stood in: every fetch the page makes is answered `answer`'s way and kept,
- * every beacon kept, on a browser with `sendBeacon` unless `beacon` is
- * false. Undone after each test.
+ * every beacon the browser queued kept, on a browser with `sendBeacon`
+ * unless `beacon` is false, which refuses the first `refuses` beacons.
+ * Undone after each test.
  */
 export function onPage(
   options: Partial<BrowserOptions> = {},
   answer: (url: string) => Response = () => new Response('{}', { status: 200 }),
-  { beacon = true }: { readonly beacon?: boolean } = {},
+  {
+    beacon = true,
+    refuses = 0,
+  }: { readonly beacon?: boolean; readonly refuses?: number } = {},
 ) {
   const fetched: Sent[] = [];
   const beacons: Blob[] = [];
+  let refused = 0;
   // The test's own fetch, put back as it was after each test.
   // eslint-disable-next-line @typescript-eslint/unbound-method
   const realFetch = window.fetch;
@@ -66,6 +71,10 @@ export function onPage(
     Object.defineProperty(window.navigator, 'sendBeacon', {
       configurable: true,
       value: (_url: string, data: Blob) => {
+        if (refused < refuses) {
+          refused += 1;
+          return false;
+        }
         beacons.push(data);
         return true;
       },

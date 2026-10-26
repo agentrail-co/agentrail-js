@@ -1,8 +1,9 @@
 import { frameBatchSchema } from '@argus/journey-linkage';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   BrowserCollectorRefusedError,
+  BrowserCollectorUnavailableError,
   type BrowserCall,
   type FingerprintComponent,
 } from '../src/index.js';
@@ -68,6 +69,54 @@ describe('sending to the collector', () => {
     }
   });
 
+  // Fails if someone sends the queue only at fifty events or five seconds:
+  // a page whose steps are large would queue more than its closing beacons
+  // may carry, and the browser would refuse what is past the budget.
+  it('sends a call as soon as the queue holds a call of it', () => {
+    const site = onPage({ behaviour: false, fingerprint: false });
+    for (let index = 0; index < 20; index += 1)
+      window.history.pushState(
+        null,
+        '',
+        `/page/${String(index)}/${'x'.repeat(2_000)}`,
+      );
+
+    expect(
+      site.fetched.filter((call) => call.url === COLLECTOR).length,
+    ).toBeGreaterThan(0);
+  });
+
+  // Fails if someone drops what the browser would not queue as a beacon
+  // (the page's budget taken, as its own keepalive calls can): a page
+  // hidden then, and shown again, would never send its last steps.
+  it('keeps what the browser would not queue as a beacon, and sends it soon after', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const errors: Error[] = [];
+      const site = onPage(
+        {
+          behaviour: false,
+          fingerprint: false,
+          onError: (error) => errors.push(error),
+        },
+        undefined,
+        { refuses: 1 },
+      );
+      window.history.pushState(null, '', '/next');
+      window.dispatchEvent(new PageTransitionEvent('pagehide'));
+      vi.advanceTimersByTime(5_000);
+      const calls = await site.calls();
+
+      expect(site.beacons).toEqual([]);
+      expect(
+        calls.flatMap((call) => call.events.map((event) => event.http?.path)),
+      ).toEqual(['/', '/next']);
+      expect(errors).toEqual([expect.any(BrowserCollectorUnavailableError)]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // Fails if someone sends a hidden page's last steps by fetch alone (a
   // closing page cancels it), or sends them twice.
   it('sends what is queued as a beacon when the page goes, once', async () => {
@@ -84,10 +133,10 @@ describe('sending to the collector', () => {
   });
 
   // Fails if someone lets the frames a send gathers start a send of their
-  // own: at the fiftieth event with frames buffered, every send would call
-  // the next until the stack overflowed, and the page's own fetch would
-  // reject.
-  it('sends the fiftieth event and the frames buffered with it in one send', async () => {
+  // own: once the queue fills a call with frames buffered, every send would
+  // call the next until the stack overflowed, and the page's own fetch
+  // would reject.
+  it('sends the frames buffered when the queue fills a call in that one send', async () => {
     const site = onPage({ fingerprint: false });
     await site.agentrail.ready;
     window.dispatchEvent(
@@ -97,7 +146,7 @@ describe('sending to the collector', () => {
       await window.fetch(`/v1/items/${String(index)}`);
     const calls = await site.calls();
 
-    expect(calls.flatMap((call) => call.events)).toHaveLength(50);
+    expect(calls.flatMap((call) => call.events).length).toBeGreaterThan(0);
     expect(
       calls.flatMap((call) =>
         call.behaviour.flatMap((batch) => batch.frames.map((f) => f[0])),

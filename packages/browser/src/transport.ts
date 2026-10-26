@@ -10,7 +10,10 @@ export class BrowserCollectorRefusedError extends Error {
   }
 }
 
-/** A call could not be delivered: the network failed, or no beacon was queued. */
+/**
+ * A call could not be delivered: the network failed, or the browser would
+ * not queue its beacon (what that beacon held waits for the next send).
+ */
 export class BrowserCollectorUnavailableError extends Error {
   override readonly name = 'BrowserCollectorUnavailableError';
 }
@@ -54,6 +57,8 @@ export interface Transport {
   /**
    * Sends everything queued. A beacon outlives the page, so it is what a
    * page being hidden sends with; a fetch reports what the collector said.
+   * What the browser would not queue as a beacon stays queued, and goes by
+   * fetch after a while unless a send takes it first.
    */
   send(how: 'fetch' | 'beacon'): void;
   stop(): void;
@@ -65,6 +70,8 @@ export function createTransport(options: TransportOptions): Transport {
   let events: AgentrailEvent[] = [];
   let behaviour: FrameBatch[] = [];
   let fingerprints: Fingerprint[] = [];
+  /** What is queued would take about this much of a call. */
+  let queuedBytes = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let stopped = false;
   // What `beforeSend` hands over joins this send; it never starts another.
@@ -75,8 +82,8 @@ export function createTransport(options: TransportOptions): Transport {
     component: options.component,
     tab: options.tab,
   };
-  const sizeOf = (call: BrowserCall) =>
-    encoder.encode(JSON.stringify(call)).byteLength;
+  const sizeOf = (item: unknown) =>
+    encoder.encode(JSON.stringify(item)).byteLength;
   const overfull = (call: BrowserCall) =>
     call.events.length > MAX_CALL_EVENTS ||
     call.behaviour.length > MAX_CALL_BATCHES ||
@@ -120,21 +127,14 @@ export function createTransport(options: TransportOptions): Transport {
     return packed;
   }
 
-  function deliver(call: BrowserCall, how: 'fetch' | 'beacon'): void {
+  /** Hands a call to the browser; false when it would not queue its beacon. */
+  function deliver(call: BrowserCall, how: 'fetch' | 'beacon'): boolean {
     const body = JSON.stringify(call);
-    if (how === 'beacon' && options.beacon !== null) {
-      const queued = options.beacon(
+    if (how === 'beacon' && options.beacon !== null)
+      return options.beacon(
         options.endpoint,
         new Blob([body], { type: 'text/plain;charset=UTF-8' }),
       );
-      if (!queued)
-        options.onError(
-          new BrowserCollectorUnavailableError(
-            'The browser did not queue the beacon.',
-          ),
-        );
-      return;
-    }
     options
       .fetch(options.endpoint, {
         method: 'POST',
@@ -161,6 +161,14 @@ export function createTransport(options: TransportOptions): Transport {
           );
         },
       );
+    return true;
+  }
+
+  function later(): void {
+    timer ??= setTimeout(() => {
+      timer = null;
+      send('fetch');
+    }, FLUSH_MS);
   }
 
   function send(how: 'fetch' | 'beacon'): void {
@@ -174,35 +182,47 @@ export function createTransport(options: TransportOptions): Transport {
     } finally {
       gathering = false;
     }
-    const pending = calls();
-    events = [];
-    behaviour = [];
-    fingerprints = [];
-    for (const call of pending) deliver(call, how);
+    // A page's budget for beacons can be full (its own `keepalive` calls
+    // take it too): what the browser would not queue stays queued, in the
+    // order it came, for a page that comes back to send.
+    const refused = calls().filter((call) => !deliver(call, how));
+    events = refused.flatMap((call) => call.events);
+    behaviour = refused.flatMap((call) => call.behaviour);
+    fingerprints = refused.flatMap((call) => call.fingerprints);
+    queuedBytes = refused.reduce((total, call) => total + sizeOf(call), 0);
+    if (refused.length === 0) return;
+    const beacons =
+      refused.length === 1 ? 'a beacon' : `${String(refused.length)} beacons`;
+    options.onError(
+      new BrowserCollectorUnavailableError(
+        `The browser did not queue ${beacons}; what it held waits for the next send.`,
+      ),
+    );
+    if (!stopped) later();
   }
 
-  function queued(): void {
+  function queued(item: unknown): void {
+    queuedBytes += sizeOf(item);
     if (stopped || gathering) return;
-    if (events.length >= FLUSH_EVENTS) send('fetch');
-    else
-      timer ??= setTimeout(() => {
-        timer = null;
-        send('fetch');
-      }, FLUSH_MS);
+    // A call's worth goes at once, so a page hidden next has at most about
+    // one call left to send as a beacon.
+    if (events.length >= FLUSH_EVENTS || queuedBytes >= MAX_CALL_BYTES)
+      send('fetch');
+    else later();
   }
 
   return {
     event(event) {
       events.push(event);
-      queued();
+      queued(event);
     },
     behaviour(batch) {
       behaviour.push(batch);
-      queued();
+      queued(batch);
     },
     fingerprint(fingerprint) {
       fingerprints.push(fingerprint);
-      queued();
+      queued(fingerprint);
     },
     send,
     stop() {

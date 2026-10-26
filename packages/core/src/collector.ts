@@ -146,7 +146,13 @@ export function createCollector(options: CollectorOptions): Collector {
         continue;
       }
       if (answer === null) {
-        await response.body?.cancel();
+        try {
+          await response.body?.cancel();
+        } catch (error) {
+          // The collector took the call: a body whose connection broke after
+          // its status changes nothing it said.
+          if (!(error instanceof TypeError)) throw error;
+        }
         return;
       }
       if (!retriable(response.status))

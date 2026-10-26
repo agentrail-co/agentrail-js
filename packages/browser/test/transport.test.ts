@@ -115,14 +115,21 @@ describe('turning parts off, and the fingerprint', () => {
   });
 
   // Fails if someone drops or renames a component FP-Agent's vectoriser
-  // reads (its columns would read as never seen), or lets one the browser
-  // cannot read stop the rest.
+  // reads (its columns would read as never seen), lets one the browser
+  // cannot read stop the rest, or reads it again on every page of a tab
+  // (each page of a visit would send the same browser's fingerprint again).
   it('reads every component the vectoriser reads, each a value or why not, once a tab', async () => {
     const site = onPage({ behaviour: false });
     await site.agentrail.ready;
     const [fingerprint, ...more] = (await site.sent()).flatMap(
       (call) => call.fingerprints,
     );
+    site.agentrail.stop();
+    const nextPage = onPage({ behaviour: false });
+    await nextPage.agentrail.ready;
+    expect(
+      (await nextPage.sent()).flatMap((call) => call.fingerprints),
+    ).toEqual([]);
     const components: Record<string, FingerprintComponent> =
       fingerprint?.components ?? {};
 

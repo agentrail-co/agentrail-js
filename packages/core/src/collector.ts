@@ -7,8 +7,9 @@ import type { AgentrailEvent, Component } from './event.js';
  * platform's `waitUntil`, off the request's path.
  *
  * A call that fails because the network or the collector did (no answer, a
- * 5xx, a 429) is tried again, after 250 ms and then 1 s; each try sends the
- * same events, which the collector counts as duplicates once stored. A call
+ * 5xx, a 429, or no answer within the try's deadline) is tried again, after
+ * 250 ms and then 1 s; each try sends the same events, which the collector
+ * counts as duplicates once stored. A call
  * the collector refuses (any other 4xx: a revoked secret, an event it cannot
  * read) is not tried again. Either way the events are given up and the
  * failure goes to `onError`, which logs it unless told otherwise, so a lost
@@ -26,6 +27,11 @@ export interface CollectorOptions {
   readonly batchSize?: number;
   /** Tries per call, the first included. */
   readonly attempts?: number;
+  /**
+   * How long one try may take, its answer read included, before it counts
+   * as failed and is tried again; 10 s by default.
+   */
+  readonly timeoutMs?: number;
   /** Told of each call whose events were given up. Logs by default. */
   readonly onError?: (error: Error) => void;
   readonly fetch?: typeof fetch;
@@ -72,6 +78,18 @@ function retriable(status: number): boolean {
   return status === 429 || status >= 500;
 }
 
+/**
+ * The try outran its deadline. Fetch rejects with the signal's reason, a
+ * `TimeoutError`; a runtime that does not pass the reason on rejects with an
+ * `AbortError`, and the deadline's is the only signal a try has.
+ */
+function timedOut(error: unknown): boolean {
+  return (
+    error instanceof DOMException &&
+    (error.name === 'TimeoutError' || error.name === 'AbortError')
+  );
+}
+
 export function createCollector(options: CollectorOptions): Collector {
   const {
     endpoint,
@@ -79,6 +97,7 @@ export function createCollector(options: CollectorOptions): Collector {
     component,
     batchSize = 500,
     attempts = 3,
+    timeoutMs = 10_000,
     onError = (error) => {
       console.error('agentrail: events were not sent', error);
     },
@@ -102,8 +121,12 @@ export function createCollector(options: CollectorOptions): Collector {
       // One call after another: a retry waits out the failure before it.
       if (wait !== undefined) await sleep(wait);
       let response: Response;
-      let answer: string;
+      // What the collector said; a success says nothing more worth reading.
+      let answer: string | null;
       try {
+        // One deadline for the whole try: a collector that sends its headers
+        // and never finishes its body holds the try no longer than one that
+        // never answers.
         response = await send(url, {
           method: 'POST',
           headers: {
@@ -111,16 +134,21 @@ export function createCollector(options: CollectorOptions): Collector {
             'content-type': 'application/json',
           },
           body,
+          signal: AbortSignal.timeout(timeoutMs),
         });
-        answer = await response.text();
+        answer = response.ok ? null : await response.text();
       } catch (error) {
         // Fetch rejects only when the network failed, before or while the
-        // answer arrived: nothing was read, so the call is tried again.
-        if (!(error instanceof TypeError)) throw error;
+        // answer arrived, or the deadline came first: nothing was read, so
+        // the call is tried again.
+        if (!(error instanceof TypeError) && !timedOut(error)) throw error;
         last = error;
         continue;
       }
-      if (response.ok) return;
+      if (answer === null) {
+        await response.body?.cancel();
+        return;
+      }
       if (!retriable(response.status))
         throw new CollectorRefusedError(
           response.status,

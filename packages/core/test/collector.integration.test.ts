@@ -27,13 +27,22 @@ afterEach(async () => {
       (server) =>
         new Promise((resolve) => {
           server.close(resolve);
+          // An answer left unfinished keeps its connection open.
+          server.closeAllConnections();
         }),
     ),
   );
 });
 
-/** A collector on a local port that answers each call with the next status. */
-async function collectorServer(statuses: number[]) {
+/**
+ * How the collector answers a call: a status, or, as a collector stuck
+ * mid-call would, never (`silent`), or with a success it never finishes
+ * sending (`unfinished`).
+ */
+type Answer = number | 'silent' | 'unfinished';
+
+/** A collector on a local port that answers each call with the next answer. */
+async function collectorServer(answers: Answer[]) {
   const received: Received[] = [];
   const server = createServer((request, response) => {
     let body = '';
@@ -48,10 +57,16 @@ async function collectorServer(statuses: number[]) {
         contentType: request.headers['content-type'],
         events: (JSON.parse(body) as { events: AgentrailEvent[] }).events,
       });
+      const answer = answers.shift() ?? 200;
+      if (answer === 'silent') return;
+      if (answer === 'unfinished') {
+        response
+          .writeHead(200, { 'content-type': 'application/json' })
+          .write('{"accepted":');
+        return;
+      }
       response
-        .writeHead(statuses.shift() ?? 200, {
-          'content-type': 'application/json',
-        })
+        .writeHead(answer, { 'content-type': 'application/json' })
         .end('{"accepted":1}');
     });
   });
@@ -64,13 +79,14 @@ async function collectorServer(statuses: number[]) {
 }
 
 /** A collector client on Node's own fetch, with its waits and its losses. */
-function client(endpoint: string) {
+function client(endpoint: string, timeoutMs?: number) {
   const waits: number[] = [];
   const errors: Error[] = [];
   const collector = createCollector({
     endpoint,
     secret: 'ajs_secret',
     component: COMPONENT,
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
     onError: (error) => errors.push(error),
     sleep: (ms) => {
       waits.push(ms);
@@ -115,5 +131,33 @@ describe('the collector client over HTTP', () => {
     expect(waits).toEqual([250, 1_000]);
     expect(errors).toEqual([expect.any(CollectorUnavailableError)]);
     expect(errors[0]?.cause).toBeInstanceOf(TypeError);
+  });
+
+  // Fails if someone gives a try no deadline: a collector stuck mid-call
+  // would hold the flush, and the platform's waitUntil, for good, and the
+  // events with it.
+  it('tries a call again when the collector does not answer in time', async () => {
+    const { endpoint, received } = await collectorServer(['silent']);
+    const { collector, waits, errors } = client(endpoint, 200);
+    collector.enqueue(event('e1'));
+    await collector.flush();
+
+    expect(errors).toEqual([]);
+    expect(waits).toEqual([250]);
+    expect(received).toHaveLength(2);
+  });
+
+  // Fails if someone reads a success's body to its end: a collector that
+  // stored the events and never finished saying so would hold the flush
+  // until the deadline, and then be sent the same events again.
+  it('takes a success at its status, however its body ends', async () => {
+    const { endpoint, received } = await collectorServer(['unfinished']);
+    const { collector, waits, errors } = client(endpoint, 200);
+    collector.enqueue(event('e1'));
+    await collector.flush();
+
+    expect(errors).toEqual([]);
+    expect(waits).toEqual([]);
+    expect(received).toHaveLength(1);
   });
 });

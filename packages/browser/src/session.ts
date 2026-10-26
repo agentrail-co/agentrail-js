@@ -48,6 +48,35 @@ export function tabOf(window: Page): string {
   return minted;
 }
 
+/**
+ * Whether this tab has done something once already, by a mark it keeps in
+ * `sessionStorage`; `mark` sets it. Where storage is refused, every page is
+ * a tab of its own, and has not.
+ */
+export function doneOnTab(
+  window: Page,
+  key: string,
+): {
+  readonly done: boolean;
+  readonly mark: () => void;
+} {
+  let storage: Storage;
+  try {
+    storage = window.sessionStorage;
+  } catch (error) {
+    // Reading `sessionStorage` itself throws where storage is denied.
+    if (error instanceof DOMException)
+      return { done: false, mark: () => undefined };
+    throw error;
+  }
+  return {
+    done: storage.getItem(key) !== null,
+    mark: () => {
+      storage.setItem(key, '1');
+    },
+  };
+}
+
 /** The page's clock, milliseconds since the epoch, finer than a millisecond. */
 export function nowOf(window: Page): () => number {
   const { performance } = window;

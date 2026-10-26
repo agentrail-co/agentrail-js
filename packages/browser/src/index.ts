@@ -12,7 +12,7 @@ import {
   type Recorder,
 } from './events.js';
 import { traceFetch, traceXhr } from './fetch.js';
-import { nowOf, sessionOf, tabOf } from './session.js';
+import { doneOnTab, nowOf, sessionOf, tabOf } from './session.js';
 import { createTransport } from './transport.js';
 import { traceTools } from './webmcp.js';
 import { BROWSER_EVENT_KINDS, type Fingerprint, type Page } from './wire.js';
@@ -224,8 +224,10 @@ export function start(options: BrowserOptions): Agentrail {
         }, told);
 
   const on = page.id;
+  // Once a tab: the pages after the first are the same browser.
+  const fingerprinted = doneOnTab(window, 'agentrail_fingerprinted');
   const fingerprintReady =
-    options.fingerprint === false
+    options.fingerprint === false || fingerprinted.done
       ? Promise.resolve()
       : import('./fingerprint.js')
           .then(({ readFingerprint }) => readFingerprint(window))
@@ -236,6 +238,7 @@ export function start(options: BrowserOptions): Agentrail {
               components,
             };
             transport.fingerprint(fingerprint);
+            fingerprinted.mark();
           })
           .catch(told);
 

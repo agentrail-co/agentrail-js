@@ -45,12 +45,7 @@ export function optionsOf(
   };
 }
 
-/** Starts the script from its tag, telling the page's console of every call the collector refused. */
+/** Starts the script from its tag; what fails is told on the page's console. */
 export function startFromTag(tag: HTMLScriptElement): Agentrail {
-  return start({
-    ...optionsOf(tag),
-    onError: (error) => {
-      console.warn(`Agentrail: ${error.message}`);
-    },
-  });
+  return start(optionsOf(tag));
 }

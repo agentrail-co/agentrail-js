@@ -188,6 +188,27 @@ describe('sending to the collector', () => {
     expect(errors).toEqual([expect.any(BrowserCollectorRefusedError)]);
     expect((errors[0] as BrowserCollectorRefusedError).status).toBe(401);
   });
+
+  // Fails if someone tells nobody of a failed call by default: a site that
+  // starts the script itself with a revoked key would lose every call, and
+  // nothing on the page would say so.
+  it("warns on the page's console of a call the collector refused, unless told otherwise", async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const site = onPage(
+        { behaviour: false, fingerprint: false },
+        () => new Response('{}', { status: 401 }),
+      );
+      await site.sent();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(warn).toHaveBeenCalledWith(
+        'Agentrail: The collector refused the call (401).',
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });
 
 describe('turning parts off, and the fingerprint', () => {

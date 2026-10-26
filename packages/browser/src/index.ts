@@ -67,7 +67,10 @@ export interface BrowserOptions {
   readonly behaviour?: boolean;
   /** The tab's fingerprint. On unless turned off. */
   readonly fingerprint?: boolean;
-  /** Told of every call the collector refused or never got. */
+  /**
+   * Told of every call the collector refused or never got, and of a part
+   * that failed to load. Warned on the page's console unless given.
+   */
   readonly onError?: (error: Error) => void;
   /** The page; this page's window by default. */
   readonly window?: Page;
@@ -107,7 +110,11 @@ export function start(options: BrowserOptions): Agentrail {
     ...(options.firstParty ?? []).map((origin) => new URL(origin).origin),
   ]);
 
-  const onError = options.onError ?? (() => undefined);
+  const onError =
+    options.onError ??
+    ((error: Error) => {
+      console.warn(`Agentrail: ${error.message}`);
+    });
   // Undone on stop, in reverse.
   const undo: (() => void)[] = [];
   let stopped = false;

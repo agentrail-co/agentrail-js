@@ -55,8 +55,11 @@ export function markLinks(
   const linksOut: string[] = [];
 
   function marked(link: URL): string | null {
-    const mode = hosts[link.hostname.toLowerCase()];
-    if (mode === undefined) return null;
+    const host = link.hostname.toLowerCase();
+    // The site's own entries only: a link to a host named `constructor` is
+    // not one of them.
+    if (!Object.hasOwn(hosts, host)) return null;
+    const mode = hosts[host];
     const address = `${link.host}${link.pathname}${link.search}`;
     let lane = lanes.get(address);
     const first = lane === undefined;

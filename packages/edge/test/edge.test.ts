@@ -91,6 +91,7 @@ const MARKDOWN = [
   '[Deeper](https://docs.example.test/a_((b))/c.md) and https://docs.example.test/a_((b))/c.md',
   '[Elsewhere](https://elsewhere.example.test/x) and [this page](#top)',
   '[Bracketed](</guide/quick start.md>) and [bracketed](<https://docs.example.test/api.md>)',
+  '[A host by any name](https://constructor/x)',
 ].join('\n');
 
 describe('the edge', () => {
@@ -164,7 +165,9 @@ describe('the edge', () => {
   // takes another section's fragment, or a link is cut at a parenthesis of
   // its own, or marked part-way when its parentheses nest deeper than the
   // pattern reads, or a destination in angle brackets is resolved with its
-  // brackets: the agent would be sent somewhere else.
+  // brackets: the agent would be sent somewhere else. Fails too if a host
+  // is looked up past the site's own entries (`constructor` is on every
+  // object): another site's link would be marked and recorded as ours.
   it("marks an agent-facing answer's links to the site, a lane each, which the engine joins to the request that follows one", async () => {
     const { send, events } = edgeBefore(
       () =>
@@ -195,6 +198,7 @@ describe('the edge', () => {
         '[Deeper](https://docs.example.test/a_((b))/c.md) and https://docs.example.test/a_((b))/c.md',
         '[Elsewhere](https://elsewhere.example.test/x) and [this page](#top)',
         `[Bracketed](</guide/quick start.md>) and [bracketed](<https://${DOCS}/api.md?h=${lane(1)}>)`,
+        '[A host by any name](https://constructor/x)',
       ].join('\n'),
     );
     expect(page.headers.get('cache-control')).toBe('private, no-store');

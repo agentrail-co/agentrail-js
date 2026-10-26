@@ -170,45 +170,50 @@ describe('sending to the collector', () => {
     expect(sent.map((call) => call.keepalive)).toEqual([false, true]);
   });
 
-  // Fails if someone drops what the collector answered: a refused key would
-  // fail every call unseen.
-  it('tells of a call the collector refused', async () => {
-    const errors: Error[] = [];
-    const site = onPage(
-      {
-        behaviour: false,
-        fingerprint: false,
-        onError: (error) => errors.push(error),
-      },
-      () => new Response('{"code":"AUTHENTICATION_REQUIRED"}', { status: 401 }),
-    );
-    await site.sent();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(errors).toEqual([expect.any(BrowserCollectorRefusedError)]);
-    expect((errors[0] as BrowserCollectorRefusedError).status).toBe(401);
-  });
-
-  // Fails if someone tells nobody of a failed call by default: a site that
+  // Fails if someone drops what the collector answered (a refused key would
+  // fail every call unseen), or tells nobody of it by default: a site that
   // starts the script itself with a revoked key would lose every call, and
-  // nothing on the page would say so.
-  it("warns on the page's console of a call the collector refused, unless told otherwise", async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    try {
-      const site = onPage(
-        { behaviour: false, fingerprint: false },
-        () => new Response('{}', { status: 401 }),
-      );
-      await site.sent();
-      await new Promise((resolve) => setTimeout(resolve, 0));
+  // nothing on the page would say so. Or if the default still speaks when the
+  // site gave its own `onError`.
+  it.each([
+    ["to the site's onError", true],
+    ["on the page's console when the site gave none", false],
+  ] as const)(
+    'tells of a call the collector refused %s',
+    async (_, ownOnError) => {
+      const errors: Error[] = [];
+      const warnings: unknown[][] = [];
+      const warn = vi
+        .spyOn(console, 'warn')
+        .mockImplementation((...line: unknown[]) => {
+          warnings.push(line);
+        });
+      try {
+        const site = onPage(
+          {
+            behaviour: false,
+            fingerprint: false,
+            ...(ownOnError ? { onError: (error) => errors.push(error) } : {}),
+          },
+          () =>
+            new Response('{"code":"AUTHENTICATION_REQUIRED"}', { status: 401 }),
+        );
+        await site.sent();
+        await new Promise((resolve) => setTimeout(resolve, 0));
 
-      expect(warn).toHaveBeenCalledWith(
-        'Agentrail: The collector refused the call (401).',
-      );
-    } finally {
-      warn.mockRestore();
-    }
-  });
+        if (ownOnError) {
+          expect(errors).toEqual([expect.any(BrowserCollectorRefusedError)]);
+          expect((errors[0] as BrowserCollectorRefusedError).status).toBe(401);
+          expect(warnings).toEqual([]);
+        } else
+          expect(warnings).toEqual([
+            ['Agentrail: The collector refused the call (401).'],
+          ]);
+      } finally {
+        warn.mockRestore();
+      }
+    },
+  );
 });
 
 describe('turning parts off, and the fingerprint', () => {

@@ -1,3 +1,8 @@
+import {
+  browserEventSchema,
+  fingerprintSchema,
+  frameBatchSchema,
+} from '@argus/journey-linkage';
 import { afterEach } from 'vitest';
 
 import {
@@ -80,7 +85,16 @@ export function onPage(
         .map((call) => call.body ?? ''),
       ...(await Promise.all(beacons.map((beacon) => beacon.text()))),
     ];
-    return bodies.map((body) => JSON.parse(body) as BrowserCall);
+    // Read with the collector's own schemas: a call it would refuse fails
+    // the test that made it.
+    return bodies.map((body) => {
+      const call = JSON.parse(body) as BrowserCall;
+      for (const event of call.events) browserEventSchema.parse(event);
+      for (const batch of call.behaviour) frameBatchSchema.parse(batch);
+      for (const fingerprint of call.fingerprints)
+        fingerprintSchema.parse(fingerprint);
+      return call;
+    });
   }
 
   /** Sends what is queued, then every call the collector got. */

@@ -14,7 +14,8 @@ import { BROWSER_EVENT_KINDS, type Page } from './wire.js';
  * `traceparent` naming a span of its own under the page view's, and is
  * recorded as that span. The server's span then takes it as its parent, a
  * trace proof from the page to the backend. A call to anywhere else goes as
- * it was made, unrecorded.
+ * it was made, unrecorded. A relative URL is the document's base URL's, as
+ * the browser resolves it: a `<base>` elsewhere sends the call elsewhere.
  */
 
 export interface CallContext {
@@ -76,7 +77,7 @@ export function traceFetch(window: Page, context: CallContext): () => void {
         : input instanceof URL
           ? input.href
           : input;
-    const url = new URL(target, window.location.href);
+    const url = new URL(target, window.document.baseURI);
     if (!context.firstParty(url)) return original.call(window, input, init);
     const spans = spansOf(context);
     const headers = new Headers(
@@ -121,7 +122,7 @@ export function traceXhr(window: Page, context: CallContext): () => void {
       password?: string | null,
     ]
   ) {
-    const target = new URL(url, window.location.href);
+    const target = new URL(url, window.document.baseURI);
     if (context.firstParty(target))
       calls.set(this, {
         url: target,

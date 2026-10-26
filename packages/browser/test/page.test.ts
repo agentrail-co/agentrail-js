@@ -198,6 +198,44 @@ describe("the page's calls", () => {
     expect(linkage.journeys).toHaveLength(1);
   });
 
+  // Fails if someone resolves a call's relative URL against the page's
+  // address rather than its base URL: a page whose `<base>` names another
+  // site would send that site our trace (a header it never allowed, so the
+  // browser's preflight fails the call), and one whose base is a folder
+  // would have its calls recorded on paths they never went to.
+  it('resolves a relative call as the browser does, against the base URL', async () => {
+    const base = document.createElement('base');
+    document.head.append(base);
+    try {
+      await withStandInXhr(async (headers) => {
+        const site = onPage({ behaviour: false, fingerprint: false });
+        base.href = 'https://cdn.example.test/assets/';
+        await window.fetch('manifest.json');
+        const request = new window.XMLHttpRequest();
+        request.open('GET', 'fonts.json');
+        request.send();
+        base.href = '/app/';
+        await window.fetch('v1/projects');
+        request.open('GET', 'v1/settings');
+        request.send();
+        const [, ...calls] = await eventsOf(site);
+
+        expect(
+          site.fetched
+            .find((call) => call.url === 'manifest.json')
+            ?.headers.has('traceparent'),
+        ).toBe(false);
+        expect(calls.map((call) => call.http?.path)).toEqual([
+          '/app/v1/projects',
+          '/app/v1/settings',
+        ]);
+        expect(headers).toHaveLength(1);
+      });
+    } finally {
+      base.remove();
+    }
+  });
+
   // Fails if someone reads a call's parent when it ends rather than when it
   // started: a call a single-page app's route change overtook would name a
   // parent in another trace than its own, and the engine could not join it.

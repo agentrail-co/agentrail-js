@@ -235,6 +235,45 @@ describe('turning parts off, and the fingerprint', () => {
     });
     expect(components.audio).toEqual({ error: 'unsupported' });
   });
+
+  // Fails if someone reads the fingerprint after the site stopped the
+  // script (a site that stops it as consent is withdrawn would still have
+  // the browser read), or keeps one read as stop came as read: it goes into
+  // a stopped queue that never sends, and every later page of the tab skips
+  // it as sent.
+  it('neither reads nor keeps a fingerprint once stopped, and the next start reads it', async () => {
+    let reads = 0;
+    let onRead = (): void => undefined;
+    Object.defineProperty(window.navigator, 'hardwareConcurrency', {
+      configurable: true,
+      get: () => {
+        reads += 1;
+        onRead();
+        return 8;
+      },
+    });
+    try {
+      const first = onPage({ behaviour: false });
+      first.agentrail.stop();
+      await first.agentrail.ready;
+      expect(reads).toBe(0);
+
+      const second = onPage({ behaviour: false });
+      onRead = () => {
+        onRead = () => undefined;
+        second.agentrail.stop();
+      };
+      await second.agentrail.ready;
+      const third = onPage({ behaviour: false });
+      await third.agentrail.ready;
+
+      expect(
+        (await third.sent()).flatMap((call) => call.fingerprints),
+      ).toHaveLength(1);
+    } finally {
+      Reflect.deleteProperty(window.navigator, 'hardwareConcurrency');
+    }
+  });
 });
 
 describe('packing calls', () => {

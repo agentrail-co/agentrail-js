@@ -230,8 +230,13 @@ export function start(options: BrowserOptions): Agentrail {
     options.fingerprint === false || fingerprinted.done
       ? Promise.resolve()
       : import('./fingerprint.js')
-          .then(({ readFingerprint }) => readFingerprint(window))
+          // Stopped while it loaded or measured: not read, nor kept as read,
+          // so the tab's next start reads it.
+          .then(({ readFingerprint }) =>
+            stopped ? null : readFingerprint(window),
+          )
           .then((components) => {
+            if (components === null || stopped) return;
             const fingerprint: Fingerprint = {
               id: crypto.randomUUID(),
               page: on,

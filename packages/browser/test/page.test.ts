@@ -4,7 +4,7 @@ import {
   link,
   linkageSettings,
 } from '@argus/journey-linkage';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { BrowserAlreadyStartedError, start } from '../src/index.js';
 import { API, COLLECTOR, KEY, onPage } from './support/page.js';
@@ -106,6 +106,31 @@ describe('the browser script', () => {
     );
   });
 
+  // Fails if someone lets a full session storage throw out of start: a site
+  // whose storage is full would record nothing, and say it had started.
+  it('records the page where the tab has no room to keep its id', async () => {
+    const setItem = vi
+      .spyOn(window.Storage.prototype, 'setItem')
+      .mockImplementation(() => {
+        throw new DOMException(
+          'The quota has been exceeded.',
+          'QuotaExceededError',
+        );
+      });
+    try {
+      const site = onPage({ behaviour: false });
+      await site.agentrail.ready;
+      const calls = await site.sent();
+
+      expect(calls.flatMap((call) => call.events.map((e) => e.kind))).toEqual([
+        'page.view',
+      ]);
+      expect(calls.flatMap((call) => call.fingerprints)).toHaveLength(1);
+    } finally {
+      setItem.mockRestore();
+    }
+  });
+
   // Fails if someone lets a page start the script twice: every step would
   // be recorded twice, and the engine would see two of each.
   it('refuses to start twice on one page', () => {
@@ -173,27 +198,27 @@ describe("the page's calls", () => {
     expect(linkage.journeys).toHaveLength(1);
   });
 
+  // Fails if someone reads a call's parent when it ends rather than when it
+  // started: a call a single-page app's route change overtook would name a
+  // parent in another trace than its own, and the engine could not join it.
+  it('keeps the page a call started on as its parent, when it ends on the next', async () => {
+    const site = onPage({ behaviour: false, fingerprint: false });
+    const pending = window.fetch('/v1/slow');
+    window.history.pushState(null, '', '/next');
+    await pending;
+    const [first, , call] = await eventsOf(site);
+
+    expect(call?.kind).toBe('http.client');
+    expect(call?.span).toMatchObject({
+      traceId: first?.span?.traceId,
+      parentSpanId: first?.span?.spanId,
+    });
+  });
+
   // Fails if someone wraps fetch but not XHR: a page on an older client
   // would carry no trace on its calls.
   it("carries the page view's trace on a first-party XHR too", async () => {
-    const headers: [string, string][] = [];
-    // jsdom's XHR goes to the network: a stand-in that answers at once.
-    class StandInXhr extends EventTarget {
-      status = 0;
-      open(): void {
-        return undefined;
-      }
-      setRequestHeader(name: string, value: string): void {
-        headers.push([name, value]);
-      }
-      send(): void {
-        this.status = 204;
-        this.dispatchEvent(new Event('loadend'));
-      }
-    }
-    const realXhr = window.XMLHttpRequest;
-    window.XMLHttpRequest = StandInXhr as unknown as typeof XMLHttpRequest;
-    try {
+    await withStandInXhr(async (headers) => {
       const site = onPage({ behaviour: false, fingerprint: false });
       const request = new window.XMLHttpRequest();
       request.open('PUT', '/v1/settings');
@@ -211,8 +236,57 @@ describe("the page's calls", () => {
           `00-${call?.span?.traceId ?? ''}-${call?.span?.spanId ?? ''}-01`,
         ],
       ]);
-    } finally {
-      window.XMLHttpRequest = realXhr;
-    }
+    });
+  });
+
+  // Fails if someone leaves a sent XHR's listener on it: sent again, the
+  // request would record its first call a second time, a new event on the
+  // same span.
+  it('records an XHR opened and sent again as a call of its own, once', async () => {
+    await withStandInXhr(async () => {
+      const site = onPage({ behaviour: false, fingerprint: false });
+      const request = new window.XMLHttpRequest();
+      for (const path of ['/v1/first', '/v1/second']) {
+        request.open('GET', path);
+        request.send();
+      }
+      const [, ...calls] = await eventsOf(site);
+
+      expect(calls.map((call) => call.http?.path)).toEqual([
+        '/v1/first',
+        '/v1/second',
+      ]);
+      expect(new Set(calls.map((call) => call.span?.spanId)).size).toBe(2);
+    });
   });
 });
+
+/**
+ * jsdom's XHR goes to the network: a stand-in that answers at once, keeping
+ * every header set on it, in place of the page's XHR for `run`.
+ */
+async function withStandInXhr(
+  run: (headers: [string, string][]) => Promise<void>,
+): Promise<void> {
+  const headers: [string, string][] = [];
+  class StandInXhr extends EventTarget {
+    status = 0;
+    open(): void {
+      return undefined;
+    }
+    setRequestHeader(name: string, value: string): void {
+      headers.push([name, value]);
+    }
+    send(): void {
+      this.status = 204;
+      this.dispatchEvent(new Event('loadend'));
+    }
+  }
+  const realXhr = window.XMLHttpRequest;
+  window.XMLHttpRequest = StandInXhr as unknown as typeof XMLHttpRequest;
+  try {
+    await run(headers);
+  } finally {
+    window.XMLHttpRequest = realXhr;
+  }
+}

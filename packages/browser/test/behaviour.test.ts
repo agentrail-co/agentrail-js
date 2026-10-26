@@ -2,7 +2,7 @@ import { linkMarker, newMarker } from '@agentrail/core';
 import { ingestEventSchema } from '@argus/journey-linkage';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { KEY_CLASSES, type Frame } from '../src/index.js';
+import { KEY_CLASSES, type BrowserCall, type Frame } from '../src/index.js';
 import { onPage } from './support/page.js';
 
 /** Every frame the collector got, in order. */
@@ -118,6 +118,65 @@ describe('the behaviour recorder', () => {
     );
   });
 
+  // Fails if someone drops the trust flag from a frame: a paste, an input or
+  // a scroll a script dispatched would read as a person's.
+  it("marks every frame a script dispatched as no person's", async () => {
+    const site = onPage({ fingerprint: false });
+    await site.agentrail.ready;
+    const field = document.body.appendChild(document.createElement('input'));
+    for (const type of ['paste', 'input', 'change'])
+      field.dispatchEvent(new Event(type, { bubbles: true }));
+    document.dispatchEvent(new Event('scroll'));
+    document.dispatchEvent(new Event('scrollend'));
+    field.dispatchEvent(
+      new PointerEvent('pointerdown', { pointerType: 'touch', bubbles: true }),
+    );
+    window.dispatchEvent(new FocusEvent('focus'));
+    window.dispatchEvent(new FocusEvent('blur'));
+    document.dispatchEvent(new Event('visibilitychange', { bubbles: true }));
+    const frames = await framesOf(site);
+
+    expect(frames.map((frame) => [frame[0], frame.at(-2)])).toEqual([
+      ['p', 1],
+      ['i', 1],
+      ['c', 1],
+      ['sc', 1],
+      ['se', 1],
+      ['pd', 1],
+      ['fo', 1],
+      ['bl', 1],
+      ['vs', 1],
+    ]);
+  });
+
+  // Fails if someone records the page being hidden after the script's beacon
+  // has gone: a background tab the browser ends without a pagehide would
+  // lose its last frame.
+  it('sends the frame of the page being hidden in its beacon', async () => {
+    const site = onPage({ fingerprint: false });
+    await site.agentrail.ready;
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => 'hidden',
+    });
+    try {
+      document.dispatchEvent(new Event('visibilitychange', { bubbles: true }));
+    } finally {
+      Reflect.deleteProperty(document, 'visibilityState');
+    }
+    const beaconed = await Promise.all(
+      site.beacons.map(
+        async (beacon) => JSON.parse(await beacon.text()) as BrowserCall,
+      ),
+    );
+
+    expect(
+      beaconed.flatMap((call) =>
+        call.behaviour.flatMap((batch) => batch.frames),
+      ),
+    ).toEqual([['vs', 0, 1, expect.any(Number)]]);
+  });
+
   // Fails if someone files frames under the page view they were sent with
   // rather than the one they happened on: a route change would hand the
   // last page's behaviour to the next.
@@ -210,5 +269,52 @@ describe("the page's WebMCP tools", () => {
     const body = JSON.stringify(await site.calls());
     expect(body).not.toContain('person@example.test');
     expect(body).not.toContain('4242');
+  });
+
+  // Fails if someone reads the page or the markers once the tool has run: a
+  // tool that moves the page on would be filed under the next page, and one
+  // that takes the link it consumed out of its input would lose the marker.
+  it('records the page and the markers a tool was called with, whatever the tool changes', async () => {
+    const registered: { execute: (input: unknown) => Promise<unknown> }[] = [];
+    Object.defineProperty(holder, 'modelContext', {
+      configurable: true,
+      value: {
+        provideContext(context: {
+          tools: { execute: (input: unknown) => Promise<unknown> }[];
+        }) {
+          registered.push(...context.tools);
+        },
+      },
+    });
+    const site = onPage({ behaviour: false, fingerprint: false });
+    const context = holder.modelContext as {
+      provideContext: (context: { tools: object[] }) => void;
+    };
+    context.provideContext({
+      tools: [
+        {
+          name: 'open',
+          execute: (input: { from?: string }) => {
+            delete input.from;
+            window.history.pushState(null, '', '/opened');
+            return Promise.resolve('opened');
+          },
+        },
+      ],
+    });
+    const marker = linkMarker(newMarker(), 4);
+    await registered[0]?.execute({
+      from: `https://docs.example.test/start?h=${marker}`,
+    });
+    const events = (await site.sent()).flatMap((call) =>
+      call.events.map((event) => ingestEventSchema.parse(event)),
+    );
+    const [view, , tool] = events;
+
+    expect(tool).toMatchObject({
+      kind: 'agent.tool.executed',
+      markers: { seen: [marker] },
+      span: { traceId: view?.span?.traceId, parentSpanId: view?.span?.spanId },
+    });
   });
 });

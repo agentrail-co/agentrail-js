@@ -60,7 +60,8 @@ export type PointerTypeCode =
 
 /**
  * One raw behaviour event, its time always last (the page's clock,
- * milliseconds since the epoch), as FP-Agent's own frames end with theirs.
+ * milliseconds since the epoch), as FP-Agent's own frames end with theirs,
+ * and just before it whether the browser says no person caused it.
  * `target` is 0 for the document, else an element's number on this tab,
  * given in order of first use: never a selector or anything of the DOM.
  * Coordinates are the viewport's (`clientX`, `clientY`).
@@ -126,6 +127,7 @@ export type Frame =
       x: number,
       y: number,
       depth: number,
+      untrusted: Untrusted,
       t: number,
     ]
   | readonly [
@@ -135,10 +137,16 @@ export type Frame =
       untrusted: Untrusted,
       t: number,
     ]
-  | readonly ['p' | 'i' | 'c', target: number, t: number]
-  | readonly ['pd', target: number, pointer: PointerTypeCode, t: number]
-  | readonly ['fo' | 'bl', t: number]
-  | readonly ['vs', visible: 0 | 1, t: number];
+  | readonly ['p' | 'i' | 'c', target: number, untrusted: Untrusted, t: number]
+  | readonly [
+      'pd',
+      target: number,
+      pointer: PointerTypeCode,
+      untrusted: Untrusted,
+      t: number,
+    ]
+  | readonly ['fo' | 'bl', untrusted: Untrusted, t: number]
+  | readonly ['vs', visible: 0 | 1, untrusted: Untrusted, t: number];
 
 export type FrameType = Frame[0];
 

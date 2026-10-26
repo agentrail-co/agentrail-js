@@ -28,9 +28,21 @@ export function sessionOf(document: Document, cookie: string): string {
 }
 
 /**
+ * Keeps a value for the tab, where the page's storage has room: a full
+ * storage (`QuotaExceededError`) keeps nothing, and the page goes on.
+ */
+function keep(storage: Storage, key: string, value: string): void {
+  try {
+    storage.setItem(key, value);
+  } catch (error) {
+    if (!(error instanceof DOMException)) throw error;
+  }
+}
+
+/**
  * This tab's id, kept for the tab's life in `sessionStorage`. Where storage
- * is refused (a sandboxed frame, storage blocked), every page is a tab of
- * its own.
+ * is refused (a sandboxed frame, storage blocked) or full, every page is a
+ * tab of its own.
  */
 export function tabOf(window: Page): string {
   let storage: Storage;
@@ -44,14 +56,14 @@ export function tabOf(window: Page): string {
   const kept = storage.getItem(TAB_KEY);
   if (kept !== null) return kept;
   const minted = crypto.randomUUID();
-  storage.setItem(TAB_KEY, minted);
+  keep(storage, TAB_KEY, minted);
   return minted;
 }
 
 /**
  * Whether this tab has done something once already, by a mark it keeps in
- * `sessionStorage`; `mark` sets it. Where storage is refused, every page is
- * a tab of its own, and has not.
+ * `sessionStorage`; `mark` sets it. Where storage is refused or full, every
+ * page is a tab of its own, and has not.
  */
 export function doneOnTab(
   window: Page,
@@ -72,7 +84,7 @@ export function doneOnTab(
   return {
     done: storage.getItem(key) !== null,
     mark: () => {
-      storage.setItem(key, '1');
+      keep(storage, key, '1');
     },
   };
 }

@@ -25,16 +25,19 @@ interface Sent {
   readonly url: string;
   readonly headers: Headers;
   readonly body: string | null;
+  readonly keepalive: boolean;
 }
 
 /**
  * The script on the test's page, with the collector and the site's API
  * stood in: every fetch the page makes is answered `answer`'s way and kept,
- * every beacon kept. Undone after each test.
+ * every beacon kept, on a browser with `sendBeacon` unless `beacon` is
+ * false. Undone after each test.
  */
 export function onPage(
   options: Partial<BrowserOptions> = {},
   answer: (url: string) => Response = () => new Response('{}', { status: 200 }),
+  { beacon = true }: { readonly beacon?: boolean } = {},
 ) {
   const fetched: Sent[] = [];
   const beacons: Blob[] = [];
@@ -52,16 +55,18 @@ export function onPage(
       url,
       headers: new Headers(init?.headers),
       body: typeof init?.body === 'string' ? init.body : null,
+      keepalive: init?.keepalive ?? false,
     });
     return Promise.resolve(answer(url));
   };
-  Object.defineProperty(window.navigator, 'sendBeacon', {
-    configurable: true,
-    value: (_url: string, data: Blob) => {
-      beacons.push(data);
-      return true;
-    },
-  });
+  if (beacon)
+    Object.defineProperty(window.navigator, 'sendBeacon', {
+      configurable: true,
+      value: (_url: string, data: Blob) => {
+        beacons.push(data);
+        return true;
+      },
+    });
   const agentrail = start({
     key: KEY,
     collector: COLLECTOR,

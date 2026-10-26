@@ -16,8 +16,9 @@ export class BrowserCollectorUnavailableError extends Error {
 }
 
 /**
- * The most one call holds. A `keepalive` fetch and a beacon share one budget
- * of 64 KiB in flight per page; this leaves room for two calls under way.
+ * The most one call holds. A closing page's beacons (or `keepalive` fetches,
+ * where there is no beacon) share one budget of 64 KiB in flight; this
+ * leaves room for two calls under way.
  */
 const MAX_CALL_BYTES = 30_000;
 /** How long a queued item waits before a call goes, at most. */
@@ -59,6 +60,8 @@ export function createTransport(options: TransportOptions): Transport {
   let fingerprints: Fingerprint[] = [];
   let timer: ReturnType<typeof setTimeout> | null = null;
   let stopped = false;
+  // What `beforeSend` hands over joins this send; it never starts another.
+  let gathering = false;
 
   const base = {
     key: options.key,
@@ -123,7 +126,9 @@ export function createTransport(options: TransportOptions): Transport {
         // Text, so a cross-origin call needs no preflight.
         headers: { 'content-type': 'text/plain;charset=UTF-8' },
         body,
-        keepalive: true,
+        // Only a closing page's fetch outlives it: an open page's sends stay
+        // out of the budget its last calls go in.
+        keepalive: how === 'beacon',
         credentials: 'omit',
       })
       .then(
@@ -148,7 +153,12 @@ export function createTransport(options: TransportOptions): Transport {
       clearTimeout(timer);
       timer = null;
     }
-    options.beforeSend();
+    gathering = true;
+    try {
+      options.beforeSend();
+    } finally {
+      gathering = false;
+    }
     const pending = calls();
     events = [];
     behaviour = [];
@@ -157,7 +167,7 @@ export function createTransport(options: TransportOptions): Transport {
   }
 
   function queued(): void {
-    if (stopped) return;
+    if (stopped || gathering) return;
     if (events.length >= FLUSH_EVENTS) send('fetch');
     else
       timer ??= setTimeout(() => {

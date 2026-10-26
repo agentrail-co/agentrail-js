@@ -27,9 +27,27 @@ export interface CallContext {
   readonly record: (event: AgentrailEvent) => void;
 }
 
+/** A call as it started: the page it started on is its parent, whatever page ends it. */
+interface Call {
+  readonly url: URL;
+  readonly method: string;
+  readonly span: SpanContext;
+  readonly parentSpanId: string;
+  readonly start: number;
+}
+
+/** A span of its own under the page view's, which is its parent. */
+function spansOf(context: CallContext): Pick<Call, 'span' | 'parentSpanId'> {
+  const page = context.page();
+  return {
+    span: { traceId: page.traceId, spanId: newSpanId() },
+    parentSpanId: page.spanId,
+  };
+}
+
 function callEvent(
   context: CallContext,
-  call: { url: URL; method: string; span: SpanContext; start: number },
+  call: Call,
   status: number | null,
 ): AgentrailEvent {
   return browserEvent(context.recorder, {
@@ -37,7 +55,7 @@ function callEvent(
     start: call.start,
     end: context.now(),
     span: call.span,
-    parentSpanId: context.page().spanId,
+    parentSpanId: call.parentSpanId,
     spanKind: 'client',
     url: call.url,
     method: call.method,
@@ -60,16 +78,15 @@ export function traceFetch(window: Page, context: CallContext): () => void {
           : input;
     const url = new URL(target, window.location.href);
     if (!context.firstParty(url)) return original.call(window, input, init);
-    const page = context.page();
-    const span = { traceId: page.traceId, spanId: newSpanId() };
+    const spans = spansOf(context);
     const headers = new Headers(
       init?.headers ?? (input instanceof Request ? input.headers : undefined),
     );
-    headers.set('traceparent', formatTraceparent(span));
+    headers.set('traceparent', formatTraceparent(spans.span));
     const method = (
       init?.method ?? (input instanceof Request ? input.method : 'GET')
     ).toUpperCase();
-    const call = { url, method, span, start: context.now() };
+    const call: Call = { url, method, ...spans, start: context.now() };
     try {
       const response = await original.call(window, input, { ...init, headers });
       context.record(callEvent(context, call, response.status));
@@ -93,10 +110,7 @@ export function traceXhr(window: Page, context: CallContext): () => void {
   // Kept unbound: each is called again with its own request as `this`.
   // eslint-disable-next-line @typescript-eslint/unbound-method
   const { open, send } = prototype;
-  const calls = new WeakMap<
-    XMLHttpRequest,
-    { url: URL; method: string; span: SpanContext; start: number }
-  >();
+  const calls = new WeakMap<XMLHttpRequest, Call>();
   prototype.open = function (
     this: XMLHttpRequest,
     method: string,
@@ -108,15 +122,14 @@ export function traceXhr(window: Page, context: CallContext): () => void {
     ]
   ) {
     const target = new URL(url, window.location.href);
-    if (context.firstParty(target)) {
-      const page = context.page();
+    if (context.firstParty(target))
       calls.set(this, {
         url: target,
         method: method.toUpperCase(),
-        span: { traceId: page.traceId, spanId: newSpanId() },
+        ...spansOf(context),
         start: 0,
       });
-    } else calls.delete(this);
+    else calls.delete(this);
     // Passed on as given: an open with only a method and a URL stays
     // asynchronous, as it always was.
     Reflect.apply(open, this, [method, url, ...rest]);
@@ -129,11 +142,17 @@ export function traceXhr(window: Page, context: CallContext): () => void {
     if (call !== undefined) {
       this.setRequestHeader('traceparent', formatTraceparent(call.span));
       const started = { ...call, start: context.now() };
-      this.addEventListener('loadend', () => {
-        context.record(
-          callEvent(context, started, this.status === 0 ? null : this.status),
-        );
-      });
+      // Once: a request opened and sent again is a call of its own, with a
+      // span of its own.
+      this.addEventListener(
+        'loadend',
+        () => {
+          context.record(
+            callEvent(context, started, this.status === 0 ? null : this.status),
+          );
+        },
+        { once: true },
+      );
     }
     send.call(this, body);
   };

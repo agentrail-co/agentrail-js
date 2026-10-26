@@ -51,9 +51,12 @@ function wrapped(tool: Tool, context: ToolContext): Tool {
   return {
     ...tool,
     execute: async (...args: unknown[]) => {
+      // Read before the tool runs: a tool may move the page on, or take what
+      // it consumed out of its arguments.
       const start = context.now();
+      const page = context.page();
+      const seen = markersIn(args[0]);
       const record = () => {
-        const page = context.page();
         context.record(
           browserEvent(context.recorder, {
             kind: BROWSER_EVENT_KINDS.toolExecuted,
@@ -65,7 +68,7 @@ function wrapped(tool: Tool, context: ToolContext): Tool {
             url: null,
             method: '',
             status: null,
-            seen: markersIn(args[0]),
+            seen,
           }),
         );
       };

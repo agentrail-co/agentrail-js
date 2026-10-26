@@ -80,6 +80,44 @@ describe('sending to the collector', () => {
     ).toEqual(['page.view']);
   });
 
+  // Fails if someone lets the frames a send gathers start a send of their
+  // own: at the fiftieth event with frames buffered, every send would call
+  // the next until the stack overflowed, and the page's own fetch would
+  // reject.
+  it('sends the fiftieth event and the frames buffered with it in one send', async () => {
+    const site = onPage({ fingerprint: false });
+    await site.agentrail.ready;
+    window.dispatchEvent(
+      new MouseEvent('mousemove', { clientX: 1, clientY: 2, bubbles: true }),
+    );
+    for (let index = 0; index < 49; index += 1)
+      await window.fetch(`/v1/items/${String(index)}`);
+    const calls = await site.calls();
+
+    expect(calls.flatMap((call) => call.events)).toHaveLength(50);
+    expect(
+      calls.flatMap((call) =>
+        call.behaviour.flatMap((batch) => batch.frames.map((f) => f[0])),
+      ),
+    ).toEqual(['mm']);
+  });
+
+  // Fails if someone sends an open page's calls with `keepalive` (slow
+  // answers would fill the budget a closing page's last calls go in), or a
+  // closing page's without it where there is no beacon (the browser would
+  // cancel them as the page goes).
+  it("keeps only a closing page's fetch alive past the page, where there is no beacon", () => {
+    const site = onPage({ behaviour: false, fingerprint: false }, undefined, {
+      beacon: false,
+    });
+    site.agentrail.flush();
+    window.history.pushState(null, '', '/next');
+    window.dispatchEvent(new PageTransitionEvent('pagehide'));
+    const sent = site.fetched.filter((call) => call.url === COLLECTOR);
+
+    expect(sent.map((call) => call.keepalive)).toEqual([false, true]);
+  });
+
   // Fails if someone drops what the collector answered: a refused key would
   // fail every call unseen.
   it('tells of a call the collector refused', async () => {

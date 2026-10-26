@@ -18,7 +18,8 @@ import {
  * Kept as it happened: every mouse move the browser delivers, and how many
  * raw moves it coalesced into it, since an automation protocol never emits
  * the raw stream a physical device does; every button, key, scroll and
- * wheel event, with whether the browser says a person caused it.
+ * wheel event, and on every frame whether the browser says a person caused
+ * it.
  */
 
 /** A batch is sent once it holds this many frames, or its page ends. */
@@ -215,7 +216,15 @@ export function recordBehaviour(
               (window.scrollY + window.innerHeight) / root.scrollHeight,
             )
           : 0;
-      push([type, 0, window.scrollX, window.scrollY, depth, t]);
+      push([
+        type,
+        0,
+        window.scrollX,
+        window.scrollY,
+        depth,
+        untrusted(event),
+        t,
+      ]);
       return;
     }
     const element =
@@ -226,6 +235,7 @@ export function recordBehaviour(
       element?.scrollLeft ?? 0,
       element?.scrollTop ?? 0,
       -1,
+      untrusted(event),
       t,
     ]);
   };
@@ -241,23 +251,33 @@ export function recordBehaviour(
   const onEntry = (event: Event) => {
     const type =
       event.type === 'paste' ? 'p' : event.type === 'input' ? 'i' : 'c';
-    push([type, targetOf(event), context.now()]);
+    push([type, targetOf(event), untrusted(event), context.now()]);
   };
   const onPointerDown = (event: PointerEvent) => {
     push([
       'pd',
       targetOf(event),
       pointerType(event.pointerType),
+      untrusted(event),
       context.now(),
     ]);
   };
   const onFocus = (event: FocusEvent) => {
     // The window's own focus, not each field's.
-    if (event.target !== window) return;
-    push([event.type === 'focus' ? 'fo' : 'bl', context.now()]);
+    if (event.target instanceof window.Node) return;
+    push([
+      event.type === 'focus' ? 'fo' : 'bl',
+      untrusted(event),
+      context.now(),
+    ]);
   };
-  const onVisibility = () => {
-    push(['vs', document.visibilityState === 'visible' ? 1 : 0, context.now()]);
+  const onVisibility = (event: Event) => {
+    push([
+      'vs',
+      document.visibilityState === 'visible' ? 1 : 0,
+      untrusted(event),
+      context.now(),
+    ]);
   };
 
   const listeners: [
@@ -298,7 +318,14 @@ export function recordBehaviour(
     // Scrolls do not bubble: caught on the way down, for any element.
     [document, 'scroll', onScroll, { passive: true, capture: true }],
     [document, 'scrollend', onScroll, { passive: true, capture: true }],
-    [document, 'visibilitychange', onVisibility, { passive: true }],
+    // Caught on the way down, before the script's own listener on the
+    // document sends a hidden page's beacon: the frame goes with it.
+    [
+      window,
+      'visibilitychange',
+      onVisibility,
+      { passive: true, capture: true },
+    ],
   ];
   for (const [target, type, listener, options] of listeners)
     target.addEventListener(type, listener, options);

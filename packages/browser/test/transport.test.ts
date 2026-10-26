@@ -1,10 +1,13 @@
+import { frameBatchSchema } from '@argus/journey-linkage';
 import { describe, expect, it } from 'vitest';
 
 import {
   BrowserCollectorRefusedError,
+  type BrowserCall,
   type FingerprintComponent,
 } from '../src/index.js';
-import { COLLECTOR, onPage } from './support/page.js';
+import { createTransport } from '../src/transport.js';
+import { COLLECTOR, KEY, onPage } from './support/page.js';
 
 /** What FP-Agent's vectoriser reads of a fingerprint, by component name. */
 const VECTORISED = [
@@ -182,5 +185,47 @@ describe('turning parts off, and the fingerprint', () => {
       value: navigator.hardwareConcurrency,
     });
     expect(components.audio).toEqual({ error: 'unsupported' });
+  });
+});
+
+describe('packing calls', () => {
+  // Fails if someone packs calls by size alone: the collector refuses a
+  // call of more than 40 behaviour batches, and every item in it is lost.
+  it('puts no more of each in a call than the collector takes', () => {
+    const bodies: string[] = [];
+    const transport = createTransport({
+      endpoint: COLLECTOR,
+      key: KEY,
+      tab: 'tab-1',
+      component: { name: '@agentrail/browser', version: '0', surfaces: [] },
+      fetch: (_url, init) => {
+        bodies.push(typeof init?.body === 'string' ? init.body : '');
+        return Promise.resolve(new Response('{}'));
+      },
+      beacon: null,
+      onError: (error) => {
+        throw error;
+      },
+      beforeSend: () => undefined,
+    });
+    const page = crypto.randomUUID();
+    for (let index = 0; index < 45; index += 1)
+      transport.behaviour({
+        id: crypto.randomUUID(),
+        page,
+        frames: [['mm', 0, index, 0, 0, 0, index]],
+      });
+    transport.send('fetch');
+    transport.stop();
+    const calls = bodies.map((body) => JSON.parse(body) as BrowserCall);
+
+    expect(
+      calls.flatMap((call) =>
+        call.behaviour.map((batch) => frameBatchSchema.parse(batch)),
+      ),
+    ).toHaveLength(45);
+    expect(
+      Math.max(...calls.map((call) => call.behaviour.length)),
+    ).toBeLessThanOrEqual(40);
   });
 });

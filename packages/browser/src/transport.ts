@@ -21,6 +21,13 @@ export class BrowserCollectorUnavailableError extends Error {
  * leaves room for two calls under way.
  */
 const MAX_CALL_BYTES = 30_000;
+/**
+ * The most of each one call holds: the collector refuses a call with more
+ * (`journeyBrowserCallSchema`, apps/api/src/modules/journey-ingest/schema.ts).
+ */
+const MAX_CALL_EVENTS = 200;
+const MAX_CALL_BATCHES = 40;
+const MAX_CALL_FINGERPRINTS = 8;
 /** How long a queued item waits before a call goes, at most. */
 const FLUSH_MS = 5_000;
 /** How many queued events send a call at once. */
@@ -70,8 +77,16 @@ export function createTransport(options: TransportOptions): Transport {
   };
   const sizeOf = (call: BrowserCall) =>
     encoder.encode(JSON.stringify(call)).byteLength;
+  const overfull = (call: BrowserCall) =>
+    call.events.length > MAX_CALL_EVENTS ||
+    call.behaviour.length > MAX_CALL_BATCHES ||
+    call.fingerprints.length > MAX_CALL_FINGERPRINTS ||
+    sizeOf(call) > MAX_CALL_BYTES;
 
-  /** The queue as calls, each under the budget, items in the order they came. */
+  /**
+   * The queue as calls, each under the budget and what the collector takes,
+   * items in the order they came.
+   */
   function calls(): BrowserCall[] {
     const none = { ...base, events: [], behaviour: [], fingerprints: [] };
     const items: BrowserCall[] = [
@@ -96,7 +111,7 @@ export function createTransport(options: TransportOptions): Transport {
             };
       // An item alone over the budget still goes, alone: the collector, not
       // this script, says whether it is too large.
-      if (current !== null && sizeOf(joined) > MAX_CALL_BYTES) {
+      if (current !== null && overfull(joined)) {
         packed.push(current);
         current = item;
       } else current = joined;

@@ -16,6 +16,10 @@ import { BROWSER_EVENT_KINDS, type Page } from './wire.js';
  * trace proof from the page to the backend. A call to anywhere else goes as
  * it was made, unrecorded. A relative URL is the document's base URL's, as
  * the browser resolves it: a `<base>` elsewhere sends the call elsewhere.
+ *
+ * A call that already carries a `traceparent` (the site's own tracer, or
+ * the site's code) keeps it, and goes unrecorded: its span is not ours to
+ * claim, and a second header would make the pair unreadable.
  */
 
 export interface CallContext {
@@ -79,10 +83,12 @@ export function traceFetch(window: Page, context: CallContext): () => void {
           : input;
     const url = new URL(target, window.document.baseURI);
     if (!context.firstParty(url)) return original.call(window, input, init);
-    const spans = spansOf(context);
+    // The headers the call goes with: the init's replace the request's.
     const headers = new Headers(
       init?.headers ?? (input instanceof Request ? input.headers : undefined),
     );
+    if (headers.has('traceparent')) return original.call(window, input, init);
+    const spans = spansOf(context);
     headers.set('traceparent', formatTraceparent(spans.span));
     const method = (
       init?.method ?? (input instanceof Request ? input.method : 'GET')
@@ -105,12 +111,16 @@ export function traceFetch(window: Page, context: CallContext): () => void {
   };
 }
 
-/** Wraps `XMLHttpRequest`'s `open` and `send`; returns what restores them. */
+/**
+ * Wraps `XMLHttpRequest`'s `open`, `setRequestHeader` and `send`; returns
+ * what restores them. A header set twice is sent as both values, so a
+ * request the site gave its own `traceparent` is left as it is.
+ */
 export function traceXhr(window: Page, context: CallContext): () => void {
   const prototype = window.XMLHttpRequest.prototype;
   // Kept unbound: each is called again with its own request as `this`.
   // eslint-disable-next-line @typescript-eslint/unbound-method
-  const { open, send } = prototype;
+  const { open, send, setRequestHeader } = prototype;
   const calls = new WeakMap<XMLHttpRequest, Call>();
   prototype.open = function (
     this: XMLHttpRequest,
@@ -135,13 +145,25 @@ export function traceXhr(window: Page, context: CallContext): () => void {
     // asynchronous, as it always was.
     Reflect.apply(open, this, [method, url, ...rest]);
   };
+  prototype.setRequestHeader = function (
+    this: XMLHttpRequest,
+    name: string,
+    value: string,
+  ) {
+    setRequestHeader.call(this, name, value);
+    if (name.toLowerCase() === 'traceparent') calls.delete(this);
+  };
   prototype.send = function (
     this: XMLHttpRequest,
     body?: Document | XMLHttpRequestBodyInit | null,
   ) {
     const call = calls.get(this);
     if (call !== undefined) {
-      this.setRequestHeader('traceparent', formatTraceparent(call.span));
+      setRequestHeader.call(
+        this,
+        'traceparent',
+        formatTraceparent(call.span),
+      );
       const started = { ...call, start: context.now() };
       // Once: a request opened and sent again is a call of its own, with a
       // span of its own.
@@ -159,6 +181,7 @@ export function traceXhr(window: Page, context: CallContext): () => void {
   };
   return () => {
     prototype.open = open;
+    prototype.setRequestHeader = setRequestHeader;
     prototype.send = send;
   };
 }

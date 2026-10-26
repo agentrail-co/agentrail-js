@@ -207,7 +207,7 @@ describe("the page's calls", () => {
     const base = document.createElement('base');
     document.head.append(base);
     try {
-      await withStandInXhr(async (headers) => {
+      await withStandInXhr(async (sent) => {
         const site = onPage({ behaviour: false, fingerprint: false });
         base.href = 'https://cdn.example.test/assets/';
         await window.fetch('manifest.json');
@@ -229,7 +229,10 @@ describe("the page's calls", () => {
           '/app/v1/projects',
           '/app/v1/settings',
         ]);
-        expect(headers).toHaveLength(1);
+        expect(sent.map((headers) => headers.has('traceparent'))).toEqual([
+          false,
+          true,
+        ]);
       });
     } finally {
       base.remove();
@@ -256,7 +259,7 @@ describe("the page's calls", () => {
   // Fails if someone wraps fetch but not XHR: a page on an older client
   // would carry no trace on its calls.
   it("carries the page view's trace on a first-party XHR too", async () => {
-    await withStandInXhr(async (headers) => {
+    await withStandInXhr(async (sent) => {
       const site = onPage({ behaviour: false, fingerprint: false });
       const request = new window.XMLHttpRequest();
       request.open('PUT', '/v1/settings');
@@ -268,12 +271,47 @@ describe("the page's calls", () => {
         http: { method: 'PUT', path: '/v1/settings', status: 204 },
       });
       expect(call?.span?.parentSpanId).toBe(view?.span?.spanId);
-      expect(headers).toEqual([
-        [
-          'traceparent',
-          `00-${call?.span?.traceId ?? ''}-${call?.span?.spanId ?? ''}-01`,
-        ],
+      expect(sent).toEqual([
+        new Map([
+          [
+            'traceparent',
+            `00-${call?.span?.traceId ?? ''}-${call?.span?.spanId ?? ''}-01`,
+          ],
+        ]),
       ]);
+    });
+  });
+
+  // Fails if someone gives a call that already carries a trace a second
+  // one: XHR would send both values in one header, which no server reads,
+  // and fetch would replace the site's own tracer's, cutting its trace.
+  it("leaves a call's own traceparent as it is, and that call unrecorded", async () => {
+    await withStandInXhr(async (sent) => {
+      const site = onPage({ behaviour: false, fingerprint: false });
+      const theirs = '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01';
+      await window.fetch('/v1/init', { headers: { traceparent: theirs } });
+      await window.fetch(
+        new Request(new URL('/v1/request', location.href), {
+          headers: { traceparent: theirs },
+        }),
+      );
+      const request = new window.XMLHttpRequest();
+      request.open('GET', '/v1/xhr');
+      request.setRequestHeader('traceparent', theirs);
+      request.send();
+      const events = await eventsOf(site);
+
+      expect(
+        ['/v1/init', `${location.origin}/v1/request`].map((url) =>
+          site.fetched
+            .find((call) => call.url === url)
+            ?.headers.get('traceparent'),
+        ),
+      ).toEqual([theirs, theirs]);
+      expect(sent.map((headers) => headers.get('traceparent'))).toEqual([
+        theirs,
+      ]);
+      expect(events.map((event) => event.kind)).toEqual(['page.view']);
     });
   });
 
@@ -300,22 +338,27 @@ describe("the page's calls", () => {
 });
 
 /**
- * jsdom's XHR goes to the network: a stand-in that answers at once, keeping
- * every header set on it, in place of the page's XHR for `run`.
+ * jsdom's XHR goes to the network: a stand-in that answers at once, in
+ * place of the page's XHR for `run`. It keeps the headers each send went
+ * with, a header set twice as both values, as the browser sends it.
  */
 async function withStandInXhr(
-  run: (headers: [string, string][]) => Promise<void>,
+  run: (sent: Map<string, string>[]) => Promise<void>,
 ): Promise<void> {
-  const headers: [string, string][] = [];
+  const sent: Map<string, string>[] = [];
   class StandInXhr extends EventTarget {
     status = 0;
+    headers = new Map<string, string>();
     open(): void {
-      return undefined;
+      this.headers = new Map();
     }
     setRequestHeader(name: string, value: string): void {
-      headers.push([name, value]);
+      const key = name.toLowerCase();
+      const held = this.headers.get(key);
+      this.headers.set(key, held === undefined ? value : `${held}, ${value}`);
     }
     send(): void {
+      sent.push(this.headers);
       this.status = 204;
       this.dispatchEvent(new Event('loadend'));
     }
@@ -323,7 +366,7 @@ async function withStandInXhr(
   const realXhr = window.XMLHttpRequest;
   window.XMLHttpRequest = StandInXhr as unknown as typeof XMLHttpRequest;
   try {
-    await run(headers);
+    await run(sent);
   } finally {
     window.XMLHttpRequest = realXhr;
   }

@@ -53,7 +53,10 @@ export function onPage(
           : input;
     fetched.push({
       url,
-      headers: new Headers(init?.headers),
+      // As the call goes: the init's headers replace the request's.
+      headers: new Headers(
+        init?.headers ?? (input instanceof Request ? input.headers : undefined),
+      ),
       body: typeof init?.body === 'string' ? init.body : null,
       keepalive: init?.keepalive ?? false,
     });

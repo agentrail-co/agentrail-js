@@ -1,7 +1,10 @@
 # Agentrail browser
 
 The script on a customer's pages, on the DOM and the Fetch API:
-`start({ key, collector })`, once a page, as early as it can load. It sends
+`start({ key, collector })`, once a page, as early as it can load, or the
+tag a site pastes, which loads `dist/agentrail.js` (`src/script.ts` and
+`src/tag.ts`, bundled as one classic file by `scripts/bundle.mts`; the API
+serves it). It sends
 page views, the trace on first-party calls and WebMCP tool calls to the
 collector (`POST /ingest/browser`) with the browser source's public key, and,
 loaded apart, raw behaviour and the tab's fingerprint. What it records and

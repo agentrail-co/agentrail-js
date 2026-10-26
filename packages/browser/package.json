@@ -7,13 +7,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    }
+    },
+    "./agentrail.js": "./dist/agentrail.js"
   },
   "scripts": {
-    "build": "pnpm --filter @agentrail/core build && tsc -p tsconfig.build.json",
+    "build": "pnpm --filter @agentrail/core build && tsc -p tsconfig.build.json && node --import tsx/esm scripts/bundle.mts",
     "lint": "pnpm --filter @argus/journey-linkage build && pnpm --filter @agentrail/core build && eslint .",
-    "test": "pnpm --filter @argus/journey-linkage build && pnpm --filter @agentrail/core build && vitest run",
-    "test:unit": "pnpm --filter @argus/journey-linkage build && pnpm --filter @agentrail/core build && vitest run --exclude '**/*.integration.test.ts'",
+    "test": "pnpm --filter @argus/journey-linkage build && pnpm --filter @agentrail/browser build && vitest run",
+    "test:unit": "pnpm --filter @argus/journey-linkage build && pnpm --filter @agentrail/browser build && vitest run --exclude '**/*.integration.test.ts'",
     "typecheck": "pnpm --filter @argus/journey-linkage build && pnpm --filter @agentrail/core build && tsc --noEmit"
   },
   "nx": {
@@ -29,6 +30,8 @@
     "@argus/config": "workspace:*",
     "@argus/journey-linkage": "workspace:*",
     "@types/node": "24.13.3",
-    "jsdom": "30.1.0"
+    "esbuild": "0.28.1",
+    "jsdom": "30.1.0",
+    "tsx": "4.23.11"
   }
 }

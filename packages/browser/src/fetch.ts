@@ -159,11 +159,7 @@ export function traceXhr(window: Page, context: CallContext): () => void {
   ) {
     const call = calls.get(this);
     if (call !== undefined) {
-      setRequestHeader.call(
-        this,
-        'traceparent',
-        formatTraceparent(call.span),
-      );
+      setRequestHeader.call(this, 'traceparent', formatTraceparent(call.span));
       const started = { ...call, start: context.now() };
       // Once: a request opened and sent again is a call of its own, with a
       // span of its own.

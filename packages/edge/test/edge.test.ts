@@ -292,6 +292,30 @@ describe('the edge', () => {
     }
   });
 
+  // Fails if someone sends Markdown read past the size bound on with the
+  // origin's encoding and length: a fetch hands the body over decoded, and
+  // smaller-looking than it is when compressed, so the visitor would be told
+  // to decompress plain text, and to expect the compressed length.
+  it('sends Markdown read past the size bound as the fetch decoded it', async () => {
+    const markdown = `[Start](https://${DOCS}/start.md)\n${'x'.repeat(2 * 1024 * 1024)}`;
+    const { send } = edgeBefore(
+      () =>
+        new Response(markdown, {
+          headers: {
+            'content-type': 'text/markdown',
+            'content-encoding': 'gzip',
+            'content-length': '4096',
+          },
+        }),
+    );
+    const page = await send(new Request(`https://${DOCS}/start.md`));
+
+    expect(page.headers.get('content-encoding')).toBeNull();
+    expect(page.headers.get('content-length')).toBeNull();
+    expect(page.headers.get('content-type')).toBe('text/markdown');
+    expect(await page.text()).toBe(markdown);
+  });
+
   // Fails if someone marks the cookie HttpOnly (the browser script reads
   // it), or keeps a session id the edge could not have minted.
   it('sets a session cookie it minted once, keeps it, and replaces one it could not have set', async () => {

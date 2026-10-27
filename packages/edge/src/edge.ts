@@ -129,6 +129,17 @@ function isAgentFacing(method: string, url: URL, response: Response): boolean {
 }
 
 /**
+ * The origin's headers for a body this edge has read: a fetch hands it over
+ * decoded, so neither the origin's encoding nor its length is the body's.
+ */
+function headersOfRead(response: Response): Headers {
+  const headers = new Headers(response.headers);
+  headers.delete('content-length');
+  headers.delete('content-encoding');
+  return headers;
+}
+
+/**
  * The answer's text, when it is at most `limit` bytes. A larger answer comes
  * back as a response that sends what was read and then the rest, as it came.
  */
@@ -158,7 +169,11 @@ async function readUpTo(
         },
         cancel: (reason) => reader.cancel(reason),
       });
-      return new Response(rest, response);
+      return new Response(rest, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: headersOfRead(response),
+      });
     }
   }
   return (
@@ -246,11 +261,8 @@ export function createEdge(options: EdgeOptions): Edge {
     });
     observed.served = result.served;
     observed.linksOut = result.linksOut;
-    const headers = new Headers(response.headers);
-    // The body is now this reader's alone, and no longer what the origin
-    // encoded: a fetch hands it over decoded.
-    headers.delete('content-length');
-    headers.delete('content-encoding');
+    const headers = headersOfRead(response);
+    // The body is now this reader's alone.
     headers.delete('etag');
     if (result.served !== null)
       headers.set('cache-control', 'private, no-store');

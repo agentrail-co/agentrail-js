@@ -1,8 +1,8 @@
 /**
  * What every Agentrail component shares, in any runtime with the Fetch API
  * and WebCrypto: the event the collector takes, markers, the keyed hash,
- * trace context, and the client that sends events. Nothing here imports
- * Node, the DOM or OpenTelemetry.
+ * trace context, the session, and the client that sends events. Nothing
+ * here imports Node, the DOM or OpenTelemetry.
  */
 export {
   SURFACES,
@@ -16,13 +16,22 @@ export {
   type Surface,
 } from './event.js';
 export {
-  MARKER_PATTERN,
   MAX_LINK_INDEX,
   MarkerError,
   linkMarker,
   mintMarker,
   newMarker,
+  parseMarker,
+  type ParsedMarker,
 } from './marker.js';
+export {
+  SessionTimeoutError,
+  newSessionId,
+  sessionCookie,
+  sessionStartOf,
+  type SessionCookie,
+  type SessionCookieOptions,
+} from './session.js';
 export { hashKeyIdOf, keyedHash } from './hash.js';
 export { VERSION } from './version.js';
 export {

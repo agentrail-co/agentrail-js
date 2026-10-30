@@ -25,6 +25,14 @@ function keyOf(hashKey: string): Promise<CryptoKey> {
   return imported;
 }
 
+/** The first `bytes` bytes of a digest, as lowercase hex. */
+function hexOf(digest: ArrayBuffer, bytes: number): string {
+  return [...new Uint8Array(digest)]
+    .slice(0, bytes)
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
 export async function keyedHash(
   hashKey: string,
   value: string,
@@ -34,8 +42,20 @@ export async function keyedHash(
     await keyOf(hashKey),
     encoder.encode(value),
   );
-  return [...new Uint8Array(signature)]
-    .slice(0, 16)
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('');
+  return hexOf(signature, 16);
+}
+
+/**
+ * The id a component's calls name its hash key by: the first 16 hex
+ * characters of the key's SHA-256. The collector stamps it on each event
+ * carrying a hashed value, and the linker compares hashed values only
+ * between events hashed with one key, so a workspace can replace its key.
+ * Argus works out the same id from the key it holds, so a key needs no id
+ * of its own; 64 bits of its hash say nothing of the key.
+ */
+export async function hashKeyIdOf(hashKey: string): Promise<string> {
+  return hexOf(
+    await crypto.subtle.digest('SHA-256', encoder.encode(hashKey)),
+    8,
+  );
 }

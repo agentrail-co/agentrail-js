@@ -16,7 +16,9 @@ Node, browsers. The collector and the engine behind it:
 - An address or a principal's id leaves a component only as `keyedHash` with
   the workspace's hash key. Never send one as it is, and never put the hash
   key in a page.
-- A component never mints `tenant` or `observedAt`: the collector stamps both.
+- A component never mints `tenant`, `observedAt` or `hashKeyId`: the
+  collector stamps them. A component that hashes names its key in every call
+  (`component.hashKeyId`, from `hashKeyIdOf`).
 
 Lint stops a `node:` or `@argus/` import in `src/`. Tests:
 `pnpm --filter @agentrail/core test:unit`.

@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 
 import {
   MAX_LINK_INDEX as ENGINE_MAX_LINK_INDEX,
@@ -13,6 +13,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   MAX_LINK_INDEX,
   SURFACES,
+  hashKeyIdOf,
   keyedHash,
   linkMarker,
   mintMarker,
@@ -70,5 +71,16 @@ describe('agentrail core and the engine', () => {
         createHmac('sha256', key).update(value).digest('hex').slice(0, 32),
       );
     }
+  });
+
+  // Fails if a component names its key differently from Argus, which works
+  // the id out of the key it holds (the 202610291400 migration, in SQL):
+  // every workspace's stored events would be on another key than its new
+  // ones, and nothing hashed before would ever be compared again.
+  it('names a hash key as Argus does: the first 16 hex characters of its SHA-256', async () => {
+    for (const key of ['a'.repeat(64), crypto.randomUUID().repeat(2)])
+      expect(await hashKeyIdOf(key)).toBe(
+        createHash('sha256').update(key).digest('hex').slice(0, 16),
+      );
   });
 });

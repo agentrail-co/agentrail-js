@@ -1,7 +1,8 @@
 /**
  * One event as a component sends it to the collector (`POST /ingest/events`):
  * the journey engine's event less `tenant` and `observedAt`, which the
- * collector stamps from the source's workspace and its own clock.
+ * collector stamps from the source's workspace and its own clock, and
+ * `hashKeyId`, which it stamps from the key the call names.
  *
  * The engine (`@argus/journey-linkage`, private to Argus) holds the schema
  * the collector checks; this package holds the same shape as types, so no
@@ -120,4 +121,10 @@ export interface Component {
   readonly name: string;
   readonly version: string;
   readonly surfaces: readonly Surface[];
+  /**
+   * The id of the workspace hash key it hashes with (`hashKeyIdOf`); absent
+   * for a component that hashes nothing. The collector refuses an event
+   * carrying a hashed value in a call that names no key.
+   */
+  readonly hashKeyId?: string;
 }

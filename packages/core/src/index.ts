@@ -23,7 +23,7 @@ export {
   mintMarker,
   newMarker,
 } from './marker.js';
-export { keyedHash } from './hash.js';
+export { hashKeyIdOf, keyedHash } from './hash.js';
 export {
   formatTraceparent,
   newSpanId,

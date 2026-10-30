@@ -190,7 +190,9 @@ describe("the page's calls", () => {
       {
         tenant,
         events: [view, ...calls].flatMap((event) =>
-          event === undefined ? [] : [{ ...event, tenant, observedAt: 0 }],
+          event === undefined
+            ? []
+            : [{ ...event, tenant, observedAt: 0, hashKeyId: null }],
         ),
       },
       linkageSettings,

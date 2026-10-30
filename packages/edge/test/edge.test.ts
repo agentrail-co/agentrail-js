@@ -1,4 +1,5 @@
 import {
+  hashKeyIdOf,
   keyedHash,
   linkMarker,
   newMarker,
@@ -15,6 +16,7 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import {
+  EDGE_VERSION,
   cloudflare,
   createEdge,
   vercel,
@@ -29,14 +31,16 @@ const DOCS = 'docs.example.test';
 const APP = 'app.example.test';
 
 /**
- * An edge in front of a stand-in origin, with what the origin was sent and
- * every event the collector received, each read as the collector reads it.
+ * An edge in front of a stand-in origin, with what the origin was sent, the
+ * component each call named, and every event the collector received, each
+ * read as the collector reads it.
  */
 function edgeBefore(
   origin: (request: Request) => Response | Promise<Response>,
   identify?: (request: RequestHead) => Promise<Principal | null>,
 ) {
   const forwarded: Request[] = [];
+  const components: unknown[] = [];
   const events: IngestEvent[] = [];
   const work: Promise<unknown>[] = [];
   const edge = createEdge({
@@ -53,7 +57,11 @@ function edgeBefore(
     },
     fetch: (_input, init) => {
       if (typeof init?.body !== 'string') throw new TypeError('no JSON body');
-      const call = JSON.parse(init.body) as { events: unknown[] };
+      const call = JSON.parse(init.body) as {
+        component: unknown;
+        events: unknown[];
+      };
+      components.push(call.component);
       events.push(
         ...call.events.map((event) => ingestEventSchema.parse(event)),
       );
@@ -79,7 +87,7 @@ function edgeBefore(
       await Promise.all(work.splice(0));
     }
   }
-  return { send, forwarded, events };
+  return { send, forwarded, components, events };
 }
 
 const MARKDOWN = [
@@ -220,10 +228,12 @@ describe('the edge', () => {
     // The agent follows the first link, from another session and address.
     await send(new Request(`https://${DOCS}/guide/quickstart.md?h=${lane(0)}`));
     const tenant = 'workspace-1';
+    const hashKeyId = await hashKeyIdOf(HASH_KEY);
     const stamped = events.map((event) => ({
       ...event,
       tenant,
       observedAt: 0,
+      hashKeyId,
     }));
     const linkage = link({ tenant, events: stamped }, linkageSettings);
     expect(linkage.journeys).toHaveLength(1);
@@ -350,9 +360,11 @@ describe('the edge', () => {
   // Fails if someone sends an address or a principal's id as it is: they
   // must leave the customer only as the workspace's keyed hash. (The site's
   // check reads only the request's head, so the body the origin read is
-  // out of its reach by type.)
-  it('hashes the client address and the verified principal with the workspace key', async () => {
-    const { send, events } = edgeBefore(
+  // out of its reach by type.) Fails too if a call stops naming the key it
+  // hashed with: the collector refuses its events, and the linker could not
+  // tell them from those hashed with a key the workspace replaced.
+  it('hashes the client address and the verified principal with the workspace key, and names the key', async () => {
+    const { send, components, events } = edgeBefore(
       async (request) => new Response(await request.text()),
       (request) =>
         Promise.resolve(
@@ -378,6 +390,14 @@ describe('the edge', () => {
     expect(event?.redactions).toEqual([
       { field: 'actor.egress', reason: 'keyed_hash' },
       { field: 'principal.id', reason: 'keyed_hash' },
+    ]);
+    expect(components).toEqual([
+      {
+        name: '@agentrail/edge',
+        version: EDGE_VERSION,
+        surfaces: ['edge'],
+        hashKeyId: await hashKeyIdOf(HASH_KEY),
+      },
     ]);
   });
 

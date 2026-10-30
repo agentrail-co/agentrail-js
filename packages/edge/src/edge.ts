@@ -1,6 +1,7 @@
 import {
   createCollector,
   formatTraceparent,
+  hashKeyIdOf,
   keyedHash,
   newSpanId,
   newTraceId,
@@ -194,17 +195,23 @@ export function createEdge(options: EdgeOptions): Edge {
     MARKER_PARAMETER,
     ...(options.queryAllowlist ?? []),
   ]);
-  const collector: Collector = createCollector({
-    endpoint: options.collector.endpoint,
-    secret: options.collector.secret,
-    component: {
-      name: '@agentrail/edge',
-      version: EDGE_VERSION,
-      surfaces: ['edge'],
-    },
-    ...(options.onError ? { onError: options.onError } : {}),
-    ...(options.fetch ? { fetch: options.fetch } : {}),
-  });
+  // Every call names the key its events were hashed with. Its id is a
+  // digest, which WebCrypto only gives asynchronously, so the collector is
+  // ready from the first send on, never on a request's path.
+  const collector: Promise<Collector> = hashKeyIdOf(hashKey).then((hashKeyId) =>
+    createCollector({
+      endpoint: options.collector.endpoint,
+      secret: options.collector.secret,
+      component: {
+        name: '@agentrail/edge',
+        version: EDGE_VERSION,
+        surfaces: ['edge'],
+        hashKeyId,
+      },
+      ...(options.onError ? { onError: options.onError } : {}),
+      ...(options.fetch ? { fetch: options.fetch } : {}),
+    }),
+  );
 
   /** A path as it is recorded: the allowlisted query only. */
   function recordedPath(url: URL): { path: string; dropped: boolean } {
@@ -440,7 +447,8 @@ export function createEdge(options: EdgeOptions): Edge {
         const end = Date.now();
         adapter.waitUntil(
           (async () => {
-            collector.enqueue(
+            const sending = await collector;
+            sending.enqueue(
               await eventOf({
                 request: head,
                 url,
@@ -455,7 +463,7 @@ export function createEdge(options: EdgeOptions): Edge {
                 observed,
               }),
             );
-            await collector.flush();
+            await sending.flush();
           })(),
         );
       }

@@ -1,9 +1,4 @@
 import { linkMarker, newMarker } from 'agentrail-core';
-import {
-  ingestEventSchema,
-  link,
-  linkageSettings,
-} from '@argus/journey-linkage';
 import { describe, expect, it, vi } from 'vitest';
 
 import { BrowserAlreadyStartedError, start } from '../src/index.js';
@@ -11,11 +6,9 @@ import { API, COLLECTOR, KEY, onPage } from './support/page.js';
 
 const SESSION = '2f1d1c3e-8a4b-4c5d-9e6f-0a1b2c3d4e5f';
 
-/** The events the collector got, each read with the engine's own schema. */
+/** The events the collector got. */
 async function eventsOf(site: ReturnType<typeof onPage>) {
-  return (await site.sent()).flatMap((call) =>
-    call.events.map((event) => ingestEventSchema.parse(event)),
-  );
+  return (await site.sent()).flatMap((call) => call.events);
 }
 
 describe('the browser script', () => {
@@ -146,7 +139,7 @@ describe("the page's calls", () => {
   // server's span could not be joined to the page), sends our trace to
   // another site, leaves a call unrecorded, or records it as a span of
   // another trace than its page's: the engine would not join them.
-  it("carries the page view's trace on first-party calls only, each its own span the engine joins to the page", async () => {
+  it("carries the page view's trace on first-party calls only, each its own span under the page's", async () => {
     const site = onPage({
       behaviour: false,
       fingerprint: false,
@@ -185,19 +178,6 @@ describe("the page's calls", () => {
         'traceparent',
       ),
     ).toBe(false);
-    const tenant = 'workspace-1';
-    const linkage = link(
-      {
-        tenant,
-        events: [view, ...calls].flatMap((event) =>
-          event === undefined
-            ? []
-            : [{ ...event, tenant, observedAt: 0, hashKeyId: null }],
-        ),
-      },
-      linkageSettings,
-    );
-    expect(linkage.journeys).toHaveLength(1);
   });
 
   // Fails if someone resolves a call's relative URL against the page's

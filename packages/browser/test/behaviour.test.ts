@@ -1,5 +1,4 @@
 import { linkMarker, newMarker } from 'agentrail-core';
-import { ingestEventSchema } from '@argus/journey-linkage';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { KEY_CLASSES, type BrowserCall, type Frame } from '../src/index.js';
@@ -191,9 +190,7 @@ describe('the behaviour recorder', () => {
       new MouseEvent('mouseup', { button: 0, bubbles: true }),
     );
     const calls = await site.sent();
-    const views = calls.flatMap((call) =>
-      call.events.map((event) => ingestEventSchema.parse(event)),
-    );
+    const views = calls.flatMap((call) => call.events);
     const batches = calls.flatMap((call) => call.behaviour);
 
     expect(
@@ -251,9 +248,7 @@ describe("the page's WebMCP tools", () => {
     await expect(registered[1]?.execute({ card: '4242' })).rejects.toThrow(
       'declined',
     );
-    const events = (await site.sent()).flatMap((call) =>
-      call.events.map((event) => ingestEventSchema.parse(event)),
-    );
+    const events = (await site.sent()).flatMap((call) => call.events);
     const [view, ...tools] = events;
 
     expect(
@@ -306,9 +301,7 @@ describe("the page's WebMCP tools", () => {
     await registered[0]?.execute({
       from: `https://docs.example.test/start?h=${marker}`,
     });
-    const events = (await site.sent()).flatMap((call) =>
-      call.events.map((event) => ingestEventSchema.parse(event)),
-    );
+    const events = (await site.sent()).flatMap((call) => call.events);
     const [view, , tool] = events;
 
     expect(tool).toMatchObject({

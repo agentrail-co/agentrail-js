@@ -35,6 +35,7 @@
   },
   "devDependencies": {
     "@types/node": "24.13.3",
+    "agentrail-contract": "workspace:*",
     "esbuild": "0.28.1",
     "jsdom": "30.1.0",
     "tsx": "4.23.11"

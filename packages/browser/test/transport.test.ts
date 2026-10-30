@@ -1,4 +1,4 @@
-import { frameBatchSchema } from '@argus/journey-linkage';
+import { checkBrowserCall } from 'agentrail-contract';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -331,13 +331,13 @@ describe('packing calls', () => {
       });
     transport.send('fetch');
     transport.stop();
-    const calls = bodies.map((body) => JSON.parse(body) as BrowserCall);
+    const calls = bodies.map((body) => {
+      const call: unknown = JSON.parse(body);
+      checkBrowserCall(call);
+      return call as BrowserCall;
+    });
 
-    expect(
-      calls.flatMap((call) =>
-        call.behaviour.map((batch) => frameBatchSchema.parse(batch)),
-      ),
-    ).toHaveLength(45);
+    expect(calls.flatMap((call) => call.behaviour)).toHaveLength(45);
     expect(
       Math.max(...calls.map((call) => call.behaviour.length)),
     ).toBeLessThanOrEqual(40);

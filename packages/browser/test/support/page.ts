@@ -1,8 +1,4 @@
-import {
-  browserEventSchema,
-  fingerprintSchema,
-  frameBatchSchema,
-} from '@argus/journey-linkage';
+import { checkBrowserCall } from 'agentrail-contract';
 import { afterEach } from 'vitest';
 
 import {
@@ -94,7 +90,7 @@ export function onPage(
     window.history.replaceState(null, '', '/');
   });
 
-  /** Every call the collector got, by fetch or beacon, read as it reads them. */
+  /** Every call the collector got, by fetch or beacon, each checked against what it takes. */
   async function calls(): Promise<BrowserCall[]> {
     const bodies = [
       ...fetched
@@ -102,15 +98,11 @@ export function onPage(
         .map((call) => call.body ?? ''),
       ...(await Promise.all(beacons.map((beacon) => beacon.text()))),
     ];
-    // Read with the collector's own schemas: a call it would refuse fails
-    // the test that made it.
+    // A call the collector would refuse fails the test that made it.
     return bodies.map((body) => {
-      const call = JSON.parse(body) as BrowserCall;
-      for (const event of call.events) browserEventSchema.parse(event);
-      for (const batch of call.behaviour) frameBatchSchema.parse(batch);
-      for (const fingerprint of call.fingerprints)
-        fingerprintSchema.parse(fingerprint);
-      return call;
+      const call: unknown = JSON.parse(body);
+      checkBrowserCall(call);
+      return call as BrowserCall;
     });
   }
 

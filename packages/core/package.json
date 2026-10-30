@@ -30,6 +30,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "@types/node": "24.13.3"
+    "@types/node": "24.13.3",
+    "agentrail-contract": "workspace:*"
   }
 }

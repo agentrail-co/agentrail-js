@@ -1,14 +1,11 @@
 import { createHash, createHmac } from 'node:crypto';
 
 import {
-  MAX_LINK_INDEX as ENGINE_MAX_LINK_INDEX,
-  SURFACES as ENGINE_SURFACES,
-  linkMarker as engineLinkMarker,
-  mintMarker as engineMintMarker,
-  parseMarker,
-  type IngestEvent,
-} from '@argus/journey-linkage';
-import { describe, expect, expectTypeOf, it } from 'vitest';
+  MARKERS,
+  SURFACES as COLLECTOR_SURFACES,
+  bytesOf,
+} from 'agentrail-contract';
+import { describe, expect, it } from 'vitest';
 
 import {
   MAX_LINK_INDEX,
@@ -17,48 +14,30 @@ import {
   keyedHash,
   linkMarker,
   mintMarker,
-  type AgentrailEvent,
 } from '../src/index.js';
 
 /**
  * This package keeps the engine's shapes and arithmetic without importing
- * the engine; these prove the two have not drifted apart.
+ * the engine, which is private to Argus: these prove the two have not drifted
+ * apart, against the contract Argus writes (agentrail-contract).
  */
 
-function bytes(seed: number): Uint8Array {
-  return Uint8Array.from(
-    { length: 8 },
-    (_, index) => (seed * 37 + index * 101) % 256,
-  );
-}
-
-describe('agentrail core and the engine', () => {
-  // Fails to typecheck if a field of the event the collector takes, or its
-  // type, changes on one side only; fails if a surface is added on one side.
-  it('describe one event, over the same surfaces', () => {
-    expectTypeOf<AgentrailEvent>().toExtend<IngestEvent>();
-    expectTypeOf<IngestEvent>().toExtend<AgentrailEvent>();
-    expect([...SURFACES]).toEqual([...ENGINE_SURFACES]);
+describe('agentrail core and the collector', () => {
+  // Fails if a surface is added or dropped here only: the collector would
+  // refuse every call that names it.
+  it('name the same surfaces', () => {
+    expect([...SURFACES]).toEqual([...COLLECTOR_SURFACES]);
   });
 
   // Fails if the alphabet, the check or the lane encoding changes here only:
   // the engine would refuse every marker an edge planted, and markers would
   // prove nothing.
-  it('mint the markers the engine mints, and the engine reads every lane back', () => {
-    expect(MAX_LINK_INDEX).toBe(ENGINE_MAX_LINK_INDEX);
-    for (const seed of [0, 1, 7, 99, 255]) {
-      const marker = mintMarker(bytes(seed));
-      expect(marker).toBe(engineMintMarker(bytes(seed)));
-      for (const lane of [0, 1, 31, 32, MAX_LINK_INDEX]) {
-        const linked = linkMarker(marker, lane);
-        expect(linked).toBe(engineLinkMarker(marker, lane));
-        expect(parseMarker(linked)).toEqual({
-          valid: true,
-          base: marker.slice(0, 13),
-          link: lane,
-        });
-      }
-    }
+  it('mint and link the markers the engine mints and links', () => {
+    expect(MAX_LINK_INDEX).toBe(MARKERS.maxLinkIndex);
+    for (const { random, marker } of MARKERS.minted)
+      expect(mintMarker(bytesOf(random))).toBe(marker);
+    for (const { marker, lane, linked } of MARKERS.linked)
+      expect(linkMarker(marker, lane)).toBe(linked);
   });
 
   // Fails if the hash changes algorithm or length: an edge and a backend of
@@ -74,9 +53,9 @@ describe('agentrail core and the engine', () => {
   });
 
   // Fails if a component names its key differently from Argus, which works
-  // the id out of the key it holds (the 202610291400 migration, in SQL):
-  // every workspace's stored events would be on another key than its new
-  // ones, and nothing hashed before would ever be compared again.
+  // the id out of the key it holds: every workspace's stored events would be
+  // on another key than its new ones, and nothing hashed before would ever
+  // be compared again.
   it('names a hash key as Argus does: the first 16 hex characters of its SHA-256', async () => {
     for (const key of ['a'.repeat(64), crypto.randomUUID().repeat(2)])
       expect(await hashKeyIdOf(key)).toBe(

@@ -5,14 +5,9 @@ import {
   newMarker,
   newSpanId,
   newTraceId,
+  type AgentrailEvent,
 } from 'agentrail-core';
-import {
-  ingestEventSchema,
-  link,
-  linkageSettings,
-  parseMarker,
-  type IngestEvent,
-} from '@argus/journey-linkage';
+import { checkIngestRequest } from 'agentrail-contract';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -33,7 +28,7 @@ const APP = 'app.example.test';
 /**
  * An edge in front of a stand-in origin, with what the origin was sent, the
  * component each call named, and every event the collector received, each
- * read as the collector reads it.
+ * call checked against what the collector takes.
  */
 function edgeBefore(
   origin: (request: Request) => Response | Promise<Response>,
@@ -41,7 +36,7 @@ function edgeBefore(
 ) {
   const forwarded: Request[] = [];
   const components: unknown[] = [];
-  const events: IngestEvent[] = [];
+  const events: AgentrailEvent[] = [];
   const work: Promise<unknown>[] = [];
   const edge = createEdge({
     collector: {
@@ -57,15 +52,17 @@ function edgeBefore(
     },
     fetch: (_input, init) => {
       if (typeof init?.body !== 'string') throw new TypeError('no JSON body');
-      const call = JSON.parse(init.body) as {
+      const call: unknown = JSON.parse(init.body);
+      checkIngestRequest(call);
+      const checked = call as {
         component: unknown;
-        events: unknown[];
+        events: AgentrailEvent[];
       };
-      components.push(call.component);
-      events.push(
-        ...call.events.map((event) => ingestEventSchema.parse(event)),
+      components.push(checked.component);
+      events.push(...checked.events);
+      return Promise.resolve(
+        Response.json({ accepted: checked.events.length }),
       );
-      return Promise.resolve(Response.json({ accepted: call.events.length }));
     },
   });
   const adapter: EdgeAdapter = {
@@ -176,7 +173,7 @@ describe('the edge', () => {
   // brackets: the agent would be sent somewhere else. Fails too if a host
   // is looked up past the site's own entries (`constructor` is on every
   // object): another site's link would be marked and recorded as ours.
-  it("marks an agent-facing answer's links to the site, a lane each, which the engine joins to the request that follows one", async () => {
+  it("marks an agent-facing answer's links to the site, a lane each, and reads the lane back off the request that follows one", async () => {
     const { send, events } = edgeBefore(
       () =>
         new Response(MARKDOWN, {
@@ -194,7 +191,6 @@ describe('the edge', () => {
       throw new Error('no marker served');
 
     const lane = (index: number) => linkMarker(marker, index);
-    const lanes = [0, 1, 2, 3].map(lane);
     const agents = `${DOCS}/wiki/Agent_(software).md?h=${lane(3)}`;
     expect(body).toBe(
       [
@@ -217,29 +213,12 @@ describe('the edge', () => {
       `${APP}/h/${lane(2)}`,
       agents,
     ]);
-    expect(lanes.map((lane) => parseMarker(lane))).toEqual(
-      [0, 1, 2, 3].map((index) => ({
-        valid: true,
-        base: marker.slice(0, 13),
-        link: index,
-      })),
-    );
 
-    // The agent follows the first link, from another session and address.
+    // The agent follows the first link, from another session: the step
+    // carries the lane it was reached by, which the engine joins on.
     await send(new Request(`https://${DOCS}/guide/quickstart.md?h=${lane(0)}`));
-    const tenant = 'workspace-1';
-    const hashKeyId = await hashKeyIdOf(HASH_KEY);
-    const stamped = events.map((event) => ({
-      ...event,
-      tenant,
-      observedAt: 0,
-      hashKeyId,
-    }));
-    const linkage = link({ tenant, events: stamped }, linkageSettings);
-    expect(linkage.journeys).toHaveLength(1);
-    expect(linkage.links).toContainEqual(
-      expect.objectContaining({ rule: 'marker', status: 'active' }),
-    );
+    expect(events[1]?.markers.seen).toEqual([lane(0)]);
+    expect(events[1]?.http?.path).toBe(`/guide/quickstart.md?h=${lane(0)}`);
   });
 
   // Fails if someone forwards a request without the visitor's signal: a

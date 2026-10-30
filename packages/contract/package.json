@@ -1,5 +1,6 @@
 {
   "name": "agentrail-contract",
+  "version": "0.0.0",
   "private": true,
   "description": "What the Argus collector takes and how its engine reads a marker, for these packages' tests. Never published.",
   "license": "Apache-2.0",

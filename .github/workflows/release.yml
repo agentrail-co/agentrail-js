@@ -49,8 +49,13 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       # pnpm packs each package with `workspace:*` replaced by the exact
-      # version; npm publishes the tarballs, with trusted publishing.
-      - run: pnpm --filter "./packages/{core,edge,browser}" pack --pack-destination "${RUNNER_TEMP}/packages"
+      # version (its pack takes no filter, so one package at a time); npm
+      # publishes the tarballs, with trusted publishing.
+      - name: Pack
+        run: |
+          for package in core edge browser; do
+            pnpm --dir "packages/${package}" pack --pack-destination "${RUNNER_TEMP}/packages"
+          done
       - name: Publish
         run: |
           version="$(node -p "require('./packages/core/package.json').version")"

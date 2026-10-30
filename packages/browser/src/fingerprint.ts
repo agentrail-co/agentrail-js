@@ -215,7 +215,9 @@ async function audio(window: Page): Promise<FingerprintComponent> {
   oscillator.start(0);
   // A background tab can leave the render suspended for good.
   const timeout = new Promise<null>((resolve) =>
-    window.setTimeout(() => resolve(null), AUDIO_TIMEOUT_MS),
+    window.setTimeout(() => {
+      resolve(null);
+    }, AUDIO_TIMEOUT_MS),
   );
   const rendered = await Promise.race([context.startRendering(), timeout]);
   if (rendered === null) return { error: 'timeout' };
@@ -300,7 +302,12 @@ export async function readFingerprint(
       [...navigator.languages],
     ]),
     plugins: component(() =>
-      [...navigator.plugins].map((plugin) => ({ name: plugin.name })),
+      [...navigator.plugins].map((plugin) => ({
+        // Deprecated with the plugin list itself, and the very value
+        // FingerprintJS's plugins component reads.
+        // eslint-disable-next-line @typescript-eslint/no-deprecated
+        name: plugin.name,
+      })),
     ),
     screenResolution: component(() => [screen.width, screen.height]),
     // Insets of the space the browser may use: top, right, bottom, left.

@@ -76,7 +76,7 @@ export function linkMarker(marker: string, index: number): string {
     throw new MarkerError(
       `A lane is 0 to ${String(MAX_LINK_INDEX)}, not ${String(index)}.`,
     );
-  const values = [...marker.slice(0, PAYLOAD_LENGTH)].map(valueOf);
+  const values = Array.from(marker.slice(0, PAYLOAD_LENGTH), valueOf);
   values.push(Math.floor(index / BASE), index % BASE);
   return withCheck(values);
 }

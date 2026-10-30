@@ -1,30 +1,31 @@
+import { newSessionId, type SessionCookie } from 'agentrail-core';
+
 import type { Page } from './wire.js';
 
 /**
  * The session the edge set, and this tab. The edge mints the session cookie
- * and keeps it on every answer (`agentrail-edge`), without `HttpOnly` so
- * this script reads it; on a site with no edge in front, the script mints it
- * the same way, and an edge added later keeps it.
+ * and writes it again on every answer (`agentrail-edge`), without
+ * `HttpOnly` so this script reads it; on a site with no edge in front, the
+ * script mints it the same way, and an edge added later keeps it. Both
+ * follow `agentrail-core`'s rules: a session ends after its idle timeout
+ * without a request, and a day after it began.
  */
-
-/** What the edge mints for a session, and all it keeps: a version 4 UUID. */
-const MINTED_SESSION =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
 const TAB_KEY = 'agentrail_tab';
 
-/** The session's id: the edge's cookie, or one minted here as the edge would. */
-export function sessionOf(document: Document, cookie: string): string {
-  const found = document.cookie
-    .split(';')
-    .map((part) => part.trim())
-    .find((part) => part.startsWith(`${cookie}=`))
-    ?.slice(cookie.length + 1);
-  if (found !== undefined && MINTED_SESSION.test(found)) return found;
-  const minted = crypto.randomUUID();
-  const secure = document.location.protocol === 'https:' ? '; Secure' : '';
-  document.cookie = `${cookie}=${minted}; Path=/; SameSite=Lax${secure}`;
-  return minted;
+/**
+ * The session a page view goes on with: the cookie's while it is live, or
+ * one minted here as the edge would. Written again either way, so the
+ * session lasts another idle timeout.
+ */
+export function sessionOf(document: Document, cookie: SessionCookie): string {
+  const now = Date.now();
+  const session = cookie.read(document.cookie, now) ?? newSessionId(now);
+  document.cookie = cookie.write(
+    session,
+    document.location.protocol === 'https:',
+  );
+  return session;
 }
 
 /**

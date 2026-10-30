@@ -3,12 +3,14 @@ import {
   keyedHash,
   linkMarker,
   newMarker,
+  newSessionId,
   newSpanId,
   newTraceId,
+  sessionStartOf,
   VERSION,
   type AgentrailEvent,
 } from 'agentrail-core';
-import { checkIngestRequest } from 'agentrail-contract';
+import { MARKERS, checkIngestRequest } from 'agentrail-contract';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -16,8 +18,7 @@ import {
   createEdge,
   vercel,
   type EdgeAdapter,
-  type Principal,
-  type RequestHead,
+  type EdgeOptions,
 } from '../src/index.js';
 
 const HASH_KEY = 'k'.repeat(64);
@@ -32,7 +33,10 @@ const APP = 'app.example.test';
  */
 function edgeBefore(
   origin: (request: Request) => Response | Promise<Response>,
-  identify?: (request: RequestHead) => Promise<Principal | null>,
+  options: Pick<
+    EdgeOptions,
+    'identify' | 'sessionIdleTimeout' | 'sessionCookieDomain'
+  > = {},
 ) {
   const forwarded: Request[] = [];
   const components: unknown[] = [];
@@ -46,7 +50,7 @@ function edgeBefore(
     hashKey: HASH_KEY,
     hosts: { [DOCS]: 'query', [APP]: 'path' },
     queryAllowlist: ['page'],
-    ...(identify ? { identify } : {}),
+    ...options,
     onError: (error) => {
       throw error;
     },
@@ -221,6 +225,35 @@ describe('the edge', () => {
     expect(events[1]?.http?.path).toBe(`/guide/quickstart.md?h=${lane(0)}`);
   });
 
+  // Fails if someone takes a value off by its shape again, or edits the
+  // query through `searchParams`, which writes the whole of it anew: an
+  // image would lose its `h=600`, a site's own `/h/` route its prefix, and a
+  // signed address its signature (`%20` comes back as `+`).
+  it('takes off only what reads as a marker, and leaves the rest of the request as it was sent', async () => {
+    const { send, forwarded, events } = edgeBefore(() => new Response('ok'));
+    for (const { raw, result } of MARKERS.parsed) {
+      const query = `?q=a%20b&h=${encodeURIComponent(raw)}&sig=x+y`;
+      await send(new Request(`https://${DOCS}/image.png${query}`));
+      await send(new Request(`https://${APP}/h/${raw}/items`));
+      const [inQuery, inPath] = forwarded.splice(0).map(({ url }) => url);
+      const [queried, pathed] = events.splice(0);
+      expect([inQuery, inPath], raw).toEqual(
+        result.valid
+          ? [
+              `https://${DOCS}/image.png?q=a%20b&sig=x+y`,
+              `https://${APP}/items`,
+            ]
+          : [
+              `https://${DOCS}/image.png${query}`,
+              `https://${APP}/h/${raw}/items`,
+            ],
+      );
+      expect([queried?.markers.seen, pathed?.markers.seen], raw).toEqual(
+        result.valid ? [[raw], [raw]] : [[], []],
+      );
+    }
+  });
+
   // Fails if someone forwards a request without the visitor's signal: a
   // visitor who went away would leave the origin working on an answer
   // nobody reads.
@@ -306,34 +339,55 @@ describe('the edge', () => {
   });
 
   // Fails if someone marks the cookie HttpOnly (the browser script reads
-  // it), or keeps a session id the edge could not have minted.
-  it('sets a session cookie it minted once, keeps it, and replaces one it could not have set', async () => {
+  // it), writes it only when minting one (the browser would drop a busy
+  // visitor's session 30 minutes after their first request), keeps a
+  // session the edge could not have minted or one a day old (a session
+  // would never end), or names the old session as the new one's previous
+  // (the engine would join the two again).
+  it('keeps a session for another idle timeout on every answer, and starts an unlinked new one for a session it could not have set or a day old', async () => {
     const { send, events } = edgeBefore(() => new Response('ok'));
     const first = await send(new Request(`https://${DOCS}/`));
-    const cookie = first.headers.get('set-cookie');
-    const session = events[0]?.session?.id;
-    expect(cookie).toBe(
-      `agentrail_session=${session ?? ''}; Path=/; SameSite=Lax; Secure`,
-    );
-
+    const session = events[0]?.session?.id ?? '';
+    const kept = `agentrail_session=${session}; Path=/; Max-Age=1800; SameSite=Lax; Secure`;
+    expect(first.headers.get('set-cookie')).toBe(kept);
     const again = await send(
       new Request(`https://${DOCS}/next`, {
-        headers: { cookie: `other=1; agentrail_session=${session ?? ''}` },
+        headers: { cookie: `other=1; agentrail_session=${session}` },
       }),
     );
-    expect(again.headers.get('set-cookie')).toBeNull();
-    const forged = await send(
-      new Request(`https://${DOCS}/`, {
-        headers: { cookie: 'agentrail_session=chosen-by-me' },
-      }),
+    expect(again.headers.get('set-cookie')).toBe(kept);
+
+    expect(events[1]?.session).toEqual({ id: session, previousId: null });
+
+    const dayOld = newSessionId(Date.now() - 25 * 60 * 60 * 1000);
+    for (const replaced of ['chosen-by-me', crypto.randomUUID(), dayOld]) {
+      const minted = Date.now();
+      await send(
+        new Request(`https://${DOCS}/`, {
+          headers: { cookie: `agentrail_session=${replaced}` },
+        }),
+      );
+      const started = events.at(-1)?.session;
+      expect(
+        sessionStartOf(started?.id ?? ''),
+        replaced,
+      ).toBeGreaterThanOrEqual(minted);
+      expect(started?.previousId, replaced).toBeNull();
+    }
+  });
+
+  // Fails if someone drops either option on the way to the cookie: a site's
+  // subdomains would split one visitor in two, or its sessions end on
+  // another idle timeout than its browser script's.
+  it('takes the idle timeout and the domain a site sets', async () => {
+    const { send } = edgeBefore(() => new Response('ok'), {
+      sessionIdleTimeout: 3600,
+      sessionCookieDomain: 'example.test',
+    });
+    const answer = await send(new Request(`http://${DOCS}/`));
+    expect(answer.headers.get('set-cookie')).toMatch(
+      /^agentrail_session=[0-9a-f-]{36}; Path=\/; Max-Age=3600; Domain=example\.test; SameSite=Lax$/u,
     );
-    expect(forged.headers.get('set-cookie')).not.toBeNull();
-    expect(events.map((event) => event.session?.id)).toEqual([
-      session,
-      session,
-      events[2]?.session?.id,
-    ]);
-    expect(events[2]?.session?.id).not.toBe(session);
   });
 
   // Fails if someone sends an address or a principal's id as it is: they
@@ -345,12 +399,14 @@ describe('the edge', () => {
   it('hashes the client address and the verified principal with the workspace key, and names the key', async () => {
     const { send, components, events } = edgeBefore(
       async (request) => new Response(await request.text()),
-      (request) =>
-        Promise.resolve(
-          request.headers.get('authorization') === 'Bearer t'
-            ? { kind: 'user', id: 'user-1', actingUserId: 'user-2' }
-            : null,
-        ),
+      {
+        identify: (request) =>
+          Promise.resolve(
+            request.headers.get('authorization') === 'Bearer t'
+              ? { kind: 'user', id: 'user-1', actingUserId: 'user-2' }
+              : null,
+          ),
+      },
     );
     await send(
       new Request(`https://${APP}/users/me`, {

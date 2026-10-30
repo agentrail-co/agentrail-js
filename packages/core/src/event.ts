@@ -4,10 +4,10 @@
  * collector stamps from the source's workspace and its own clock, and
  * `hashKeyId`, which it stamps from the key the call names.
  *
- * The engine (`@argus/journey-linkage`, private to Argus) holds the schema
- * the collector checks; this package holds the same shape as types, so no
- * component imports the engine. `test/parity.test.ts` proves the two are one
- * shape, and that the engine accepts what this package's builders emit.
+ * The engine, private to Argus, holds the schema the collector checks; this
+ * package holds the same shape as types, so no component imports the
+ * engine. The edge's and the browser's tests check every call they send
+ * against the contract Argus writes (`packages/contract`).
  */
 
 export const SURFACES = [

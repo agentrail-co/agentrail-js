@@ -2,4 +2,4 @@
 
 @AGENTS.md
 
-Content changes go in `packages/agentrail-browser/AGENTS.md`, never here.
+Content changes go in `packages/browser/AGENTS.md`, never here.

@@ -4,9 +4,7 @@ The edge adapter in front of a customer's site, on the Fetch API:
 `createEdge(options).handle(request, cloudflare(ctx))` in a Worker, or
 `vercel({ waitUntil, origin })` in Vercel Routing Middleware. One event per
 request goes to the collector after the answer, through the platform's
-`waitUntil`. What it records and why:
-[docs/features/journey-linkage/overview.md](../../docs/features/journey-linkage/overview.md)
-("The edge adapter").
+`waitUntil`. How to run it: [README.md](README.md).
 
 ## Rules no machine can check
 
@@ -21,6 +19,5 @@ request goes to the collector after the answer, through the platform's
   as it came, and a failure to send events is told to `onError`, never to the
   visitor.
 
-Tests: `pnpm --filter @agentrail/edge test:unit`. They read every event as
-the collector does, with the engine's own schema, and link a page and the
-request that follows it with the engine.
+Tests: `pnpm --filter agentrail-edge test`. Every call they send is checked
+against what the collector takes (`packages/contract`).

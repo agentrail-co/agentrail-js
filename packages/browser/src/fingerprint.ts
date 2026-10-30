@@ -15,7 +15,11 @@ import type { FingerprintComponent, Page } from './wire.js';
  * and nothing is read from the page itself.
  */
 
-/** The candidate fonts: the ones FP-Agent's vectoriser has a column for. */
+/**
+ * The candidate fonts: the 52 names FingerprintJS's font source checks
+ * (FingerprintJS, MIT licence), each of which FP-Agent's vectoriser has a
+ * column for.
+ */
 export const FONT_CANDIDATES = [
   'ARNO PRO',
   'Agency FB',

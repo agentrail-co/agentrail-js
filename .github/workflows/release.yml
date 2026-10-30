@@ -1,0 +1,63 @@
+name: Release
+
+# Publishes agentrail-core, agentrail-edge and agentrail-browser to npm when a
+# version tag is pushed. The three share one version, and the tag names it.
+# npm trusts this workflow and the `npm` environment (trusted publishing), so
+# no token is stored anywhere, and it records provenance: a signed link from
+# each package to this repository and commit. A pre-release (`0.1.0-dev.1`)
+# goes to the `next` tag; a release to `latest`.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - name: Check the tag names every package's version
+        run: |
+          for package in core edge browser; do
+            version="$(node -p "require('./packages/${package}/package.json').version")"
+            if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
+              echo "::error::Tag ${GITHUB_REF_NAME} does not match agentrail-${package} ${version}"
+              exit 1
+            fi
+          done
+      - name: Check npm can publish with trusted publishing
+        run: |
+          npm_version="$(npm --version)"
+          node -e "const [a,b,c]=process.argv[1].split('.').map(Number); process.exit(a>11||(a===11&&(b>5||(b===5&&c>=1)))?0:1)" "$npm_version" \
+            || { echo "::error::npm ${npm_version} is older than 11.5.1, which trusted publishing needs"; exit 1; }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      # pnpm packs each package with `workspace:*` replaced by the exact
+      # version; npm publishes the tarballs, with trusted publishing.
+      - run: pnpm --filter "./packages/{core,edge,browser}" pack --pack-destination "${RUNNER_TEMP}/packages"
+      - name: Publish
+        run: |
+          version="$(node -p "require('./packages/core/package.json').version")"
+          case "$version" in
+            *-*) tag=next ;;
+            *) tag=latest ;;
+          esac
+          for package in core edge browser; do
+            npm publish "${RUNNER_TEMP}/packages/agentrail-${package}-${version}.tgz" --tag "$tag"
+          done

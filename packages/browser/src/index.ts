@@ -3,7 +3,7 @@ import {
   newTraceId,
   type AgentrailEvent,
   type SpanContext,
-} from '@agentrail/core';
+} from 'agentrail-core';
 
 import {
   MARKER_PARAMETER,

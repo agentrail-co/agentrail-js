@@ -1,7 +1,14 @@
 {
-  "name": "@agentrail/core",
-  "version": "0.0.0",
-  "private": true,
+  "name": "agentrail-core",
+  "version": "0.1.0-dev.1",
+  "description": "What every Agentrail component shares: the event the collector takes, markers, the keyed hash, W3C trace context, and the client that sends events.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agentrail-co/agentrail-js.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/agentrail-co/agentrail-js/tree/main/packages/core#readme",
   "type": "module",
   "exports": {
     ".": {
@@ -9,22 +16,20 @@
       "import": "./dist/index.js"
     }
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "lint": "pnpm --filter @argus/journey-linkage build && eslint .",
-    "test": "pnpm --filter @argus/journey-linkage build && vitest run",
-    "test:unit": "pnpm --filter @argus/journey-linkage build && vitest run --exclude '**/*.integration.test.ts'",
-    "typecheck": "pnpm --filter @argus/journey-linkage build && tsc --noEmit"
-  },
-  "nx": {
-    "tags": [
-      "scope:agentrail-core",
-      "type:library"
-    ]
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "devDependencies": {
-    "@argus/config": "workspace:*",
-    "@argus/journey-linkage": "workspace:*",
     "@types/node": "24.13.3"
   }
 }

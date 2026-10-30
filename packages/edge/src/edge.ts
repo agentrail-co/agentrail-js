@@ -10,7 +10,7 @@ import {
   type Collector,
   type PrincipalKind,
   type SpanContext,
-} from '@agentrail/core';
+} from 'agentrail-core';
 
 import { MARKER_PARAMETER, markLinks, type MarkedHosts } from './links.js';
 

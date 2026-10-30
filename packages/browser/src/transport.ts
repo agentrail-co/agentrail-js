@@ -1,4 +1,4 @@
-import type { AgentrailEvent, Component } from '@agentrail/core';
+import type { AgentrailEvent, Component } from 'agentrail-core';
 
 import type { BrowserCall, FrameBatch, Fingerprint } from './wire.js';
 

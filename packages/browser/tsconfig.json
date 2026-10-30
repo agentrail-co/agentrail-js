@@ -1,5 +1,5 @@
 {
-  "extends": "@argus/config/typescript/library.json",
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
     "lib": ["ES2024", "DOM", "DOM.Iterable"],

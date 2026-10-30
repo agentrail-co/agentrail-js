@@ -1,7 +1,14 @@
 {
-  "name": "@agentrail/edge",
-  "version": "0.0.0",
-  "private": true,
+  "name": "agentrail-edge",
+  "version": "0.1.0-dev.1",
+  "description": "The Agentrail edge: in front of a site on Cloudflare Workers, Vercel or any Fetch API runtime, it records each request and marks the links agents follow.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agentrail-co/agentrail-js.git",
+    "directory": "packages/edge"
+  },
+  "homepage": "https://github.com/agentrail-co/agentrail-js/tree/main/packages/edge#readme",
   "type": "module",
   "exports": {
     ".": {
@@ -9,25 +16,23 @@
       "import": "./dist/index.js"
     }
   },
-  "scripts": {
-    "build": "pnpm --filter @agentrail/core build && tsc -p tsconfig.build.json",
-    "lint": "pnpm --filter @argus/journey-linkage build && pnpm --filter @agentrail/core build && eslint .",
-    "test": "pnpm --filter @argus/journey-linkage build && pnpm --filter @agentrail/core build && vitest run",
-    "test:unit": "pnpm --filter @argus/journey-linkage build && pnpm --filter @agentrail/core build && vitest run --exclude '**/*.integration.test.ts'",
-    "typecheck": "pnpm --filter @argus/journey-linkage build && pnpm --filter @agentrail/core build && tsc --noEmit"
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
   },
-  "nx": {
-    "tags": [
-      "scope:agentrail-edge",
-      "type:library"
-    ]
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
-    "@agentrail/core": "workspace:*"
+    "agentrail-core": "workspace:*"
   },
   "devDependencies": {
-    "@argus/config": "workspace:*",
-    "@argus/journey-linkage": "workspace:*",
     "@types/node": "24.13.3"
   }
 }

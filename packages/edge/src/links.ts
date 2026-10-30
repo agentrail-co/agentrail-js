@@ -1,4 +1,4 @@
-import { MAX_LINK_INDEX, linkMarker, newMarker } from '@agentrail/core';
+import { MAX_LINK_INDEX, linkMarker, newMarker } from 'agentrail-core';
 
 /**
  * Markers in an agent-facing answer: every link to the site's own hosts gets

@@ -1,4 +1,4 @@
-import { linkMarker, newMarker } from '@agentrail/core';
+import { linkMarker, newMarker } from 'agentrail-core';
 import {
   ingestEventSchema,
   link,

@@ -1,11 +1,7 @@
-import {
-  formatTraceparent,
-  newSpanId,
-  type SpanContext,
-} from '@agentrail/core';
+import { formatTraceparent, newSpanId, type SpanContext } from 'agentrail-core';
 
 import { browserEvent, markersOf, type Recorder } from './events.js';
-import type { AgentrailEvent } from '@agentrail/core';
+import type { AgentrailEvent } from 'agentrail-core';
 import { BROWSER_EVENT_KINDS, type Page } from './wire.js';
 
 /**

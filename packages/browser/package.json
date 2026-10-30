@@ -1,7 +1,14 @@
 {
-  "name": "@agentrail/browser",
-  "version": "0.0.0",
-  "private": true,
+  "name": "agentrail-browser",
+  "version": "0.1.0-dev.1",
+  "description": "The Agentrail browser script: on a site's pages, it records the steps a person or an agent in a browser takes.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agentrail-co/agentrail-js.git",
+    "directory": "packages/browser"
+  },
+  "homepage": "https://github.com/agentrail-co/agentrail-js/tree/main/packages/browser#readme",
   "type": "module",
   "exports": {
     ".": {
@@ -10,25 +17,23 @@
     },
     "./agentrail.js": "./dist/agentrail.js"
   },
-  "scripts": {
-    "build": "pnpm --filter @agentrail/core build && tsc -p tsconfig.build.json && node --import tsx/esm scripts/bundle.mts",
-    "lint": "pnpm --filter @argus/journey-linkage build && pnpm --filter @agentrail/core build && eslint .",
-    "test": "pnpm --filter @argus/journey-linkage build && pnpm --filter @agentrail/browser build && vitest run",
-    "test:unit": "pnpm --filter @argus/journey-linkage build && pnpm --filter @agentrail/browser build && vitest run --exclude '**/*.integration.test.ts'",
-    "typecheck": "pnpm --filter @argus/journey-linkage build && pnpm --filter @agentrail/core build && tsc --noEmit"
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
   },
-  "nx": {
-    "tags": [
-      "scope:agentrail-browser",
-      "type:library"
-    ]
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && tsx scripts/bundle.mts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
-    "@agentrail/core": "workspace:*"
+    "agentrail-core": "workspace:*"
   },
   "devDependencies": {
-    "@argus/config": "workspace:*",
-    "@argus/journey-linkage": "workspace:*",
     "@types/node": "24.13.3",
     "esbuild": "0.28.1",
     "jsdom": "30.1.0",

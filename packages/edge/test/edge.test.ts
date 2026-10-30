@@ -5,7 +5,7 @@ import {
   newMarker,
   newSpanId,
   newTraceId,
-} from '@agentrail/core';
+} from 'agentrail-core';
 import {
   ingestEventSchema,
   link,

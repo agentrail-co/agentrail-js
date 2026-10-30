@@ -1,4 +1,4 @@
-import type { AgentrailEvent, Component } from '@agentrail/core';
+import type { AgentrailEvent, Component } from 'agentrail-core';
 
 /**
  * What the browser script sends to the collector (`POST /ingest/browser`).

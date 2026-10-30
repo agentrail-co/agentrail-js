@@ -1,4 +1,4 @@
-import type { AgentrailEvent, SpanContext } from '@agentrail/core';
+import type { AgentrailEvent, SpanContext } from 'agentrail-core';
 
 import { BROWSER_EVENT_KINDS } from './wire.js';
 

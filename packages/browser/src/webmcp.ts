@@ -2,7 +2,7 @@ import {
   newSpanId,
   type AgentrailEvent,
   type SpanContext,
-} from '@agentrail/core';
+} from 'agentrail-core';
 
 import { browserEvent, markersIn, type Recorder } from './events.js';
 import { BROWSER_EVENT_KINDS, type Page } from './wire.js';

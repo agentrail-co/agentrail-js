@@ -2,7 +2,7 @@ import type { Page } from './wire.js';
 
 /**
  * The session the edge set, and this tab. The edge mints the session cookie
- * and keeps it on every answer (`@agentrail/edge`), without `HttpOnly` so
+ * and keeps it on every answer (`agentrail-edge`), without `HttpOnly` so
  * this script reads it; on a site with no edge in front, the script mints it
  * the same way, and an edge added later keeps it.
  */

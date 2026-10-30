@@ -1,0 +1,30 @@
+{
+  "name": "@agentrail/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "pnpm --filter @argus/journey-linkage build && eslint .",
+    "test": "pnpm --filter @argus/journey-linkage build && vitest run",
+    "test:unit": "pnpm --filter @argus/journey-linkage build && vitest run --exclude '**/*.integration.test.ts'",
+    "typecheck": "pnpm --filter @argus/journey-linkage build && tsc --noEmit"
+  },
+  "nx": {
+    "tags": [
+      "scope:agentrail-core",
+      "type:library"
+    ]
+  },
+  "devDependencies": {
+    "@argus/config": "workspace:*",
+    "@argus/journey-linkage": "workspace:*",
+    "@types/node": "24.13.3"
+  }
+}

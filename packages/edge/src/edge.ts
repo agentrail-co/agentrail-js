@@ -6,6 +6,7 @@ import {
   newSpanId,
   newTraceId,
   parseTraceparent,
+  VERSION,
   type AgentrailEvent,
   type Collector,
   type PrincipalKind,
@@ -31,8 +32,6 @@ import { MARKER_PARAMETER, markLinks, type MarkedHosts } from './links.js';
  * The events go to the collector after the answer, through the platform's
  * `waitUntil`, so recording never slows a request.
  */
-
-export const EDGE_VERSION = '0.0.0';
 
 /** The response marker a request carried in a path prefix, and the rest of the path. */
 const PATH_MARKER = /^\/h\/([0-9A-Za-z]{16}|[0-9A-Za-z]{14})(?=\/|$)/u;
@@ -203,8 +202,8 @@ export function createEdge(options: EdgeOptions): Edge {
       endpoint: options.collector.endpoint,
       secret: options.collector.secret,
       component: {
-        name: '@agentrail/edge',
-        version: EDGE_VERSION,
+        name: 'agentrail-edge',
+        version: VERSION,
         surfaces: ['edge'],
         hashKeyId,
       },

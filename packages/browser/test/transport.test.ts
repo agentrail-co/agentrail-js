@@ -311,7 +311,7 @@ describe('packing calls', () => {
       endpoint: COLLECTOR,
       key: KEY,
       tab: 'tab-1',
-      component: { name: '@agentrail/browser', version: '0', surfaces: [] },
+      component: { name: 'agentrail-browser', version: '0', surfaces: [] },
       fetch: (_url, init) => {
         bodies.push(typeof init?.body === 'string' ? init.body : '');
         return Promise.resolve(new Response('{}'));

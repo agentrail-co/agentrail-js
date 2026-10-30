@@ -5,13 +5,13 @@ import {
   newMarker,
   newSpanId,
   newTraceId,
+  VERSION,
   type AgentrailEvent,
 } from 'agentrail-core';
 import { checkIngestRequest } from 'agentrail-contract';
 import { describe, expect, it } from 'vitest';
 
 import {
-  EDGE_VERSION,
   cloudflare,
   createEdge,
   vercel,
@@ -372,8 +372,8 @@ describe('the edge', () => {
     ]);
     expect(components).toEqual([
       {
-        name: '@agentrail/edge',
-        version: EDGE_VERSION,
+        name: 'agentrail-edge',
+        version: VERSION,
         surfaces: ['edge'],
         hashKeyId: await hashKeyIdOf(HASH_KEY),
       },

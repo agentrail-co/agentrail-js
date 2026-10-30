@@ -24,6 +24,7 @@ export {
   newMarker,
 } from './marker.js';
 export { hashKeyIdOf, keyedHash } from './hash.js';
+export { VERSION } from './version.js';
 export {
   formatTraceparent,
   newSpanId,

@@ -1,6 +1,7 @@
 import {
   newSpanId,
   newTraceId,
+  VERSION,
   type AgentrailEvent,
   type SpanContext,
 } from 'agentrail-core';
@@ -26,8 +27,6 @@ import { BROWSER_EVENT_KINDS, type Fingerprint, type Page } from './wire.js';
  * timing only) and the fingerprint are loaded apart, and each can be turned
  * off. Nothing is read of what is typed, pasted or chosen, nor of the DOM.
  */
-
-export const BROWSER_VERSION = '0.1.0';
 
 export {
   BrowserCollectorRefusedError,
@@ -124,8 +123,8 @@ export function start(options: BrowserOptions): Agentrail {
     key: options.key,
     tab,
     component: {
-      name: '@agentrail/browser',
-      version: BROWSER_VERSION,
+      name: 'agentrail-browser',
+      version: VERSION,
       surfaces: ['browser'],
     },
     // Taken before it is wrapped: the script's own calls carry no trace.

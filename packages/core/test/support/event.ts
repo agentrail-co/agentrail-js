@@ -2,8 +2,8 @@ import type { AgentrailEvent } from '../../src/index.js';
 
 /** The component the collector tests send as. */
 export const COMPONENT = {
-  name: '@agentrail/edge',
-  version: '0.1.0',
+  name: 'agentrail-edge',
+  version: '0.1.0-dev.1',
   surfaces: ['edge'],
 } as const;
 

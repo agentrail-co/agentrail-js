@@ -50,7 +50,7 @@ describe('the browser script', () => {
     expect(view?.resource.serviceInstanceId).toBe(call?.tab);
     expect(call).toMatchObject({
       key: KEY,
-      component: { name: '@agentrail/browser', surfaces: ['browser'] },
+      component: { name: 'agentrail-browser', surfaces: ['browser'] },
     });
     expect(JSON.stringify(call)).not.toContain('secret');
   });

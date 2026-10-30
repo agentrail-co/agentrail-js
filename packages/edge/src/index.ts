@@ -4,7 +4,6 @@
  * the collector, with markers, a session and a trace of its own.
  */
 export {
-  EDGE_VERSION,
   cloudflare,
   createEdge,
   vercel,

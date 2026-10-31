@@ -17,8 +17,9 @@ function tagOf(attributes: Record<string, string>): HTMLScriptElement {
 describe('the script tag', () => {
   // Fails if someone reads the key from anywhere but the tag, sends to
   // another collector than the one the script came from, or starts a part
-  // the site turned off.
-  it('takes its key, its collector and its parts from its own tag', () => {
+  // the site did not turn on: a tag pasted without the attributes would
+  // fingerprint every visitor, consent or not.
+  it('takes its key, its collector and its parts from its own tag, each part off unless turned on', () => {
     expect(
       optionsOf(
         tagOf({
@@ -26,6 +27,7 @@ describe('the script tag', () => {
           'data-key': KEY,
           'data-first-party':
             'https://api.example.test, https://app.example.test',
+          'data-behaviour': 'on',
           'data-fingerprint': 'off',
         }),
       ),
@@ -36,6 +38,13 @@ describe('the script tag', () => {
       behaviour: true,
       fingerprint: false,
     });
+    expect(optionsOf(tagOf({ src: SRC, 'data-key': KEY }))).toMatchObject({
+      behaviour: false,
+      fingerprint: false,
+    });
+    expect(
+      optionsOf(tagOf({ src: SRC, 'data-key': KEY, 'data-fingerprint': 'on' })),
+    ).toMatchObject({ behaviour: false, fingerprint: true });
     expect(() =>
       optionsOf(tagOf({ src: 'https://collector.example.test/agentrail.js' })),
     ).toThrow(BrowserTagKeyMissingError);

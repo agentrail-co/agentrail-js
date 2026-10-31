@@ -1,4 +1,4 @@
-import { newSessionId, type SessionCookie } from 'agentrail-core';
+import { newId, newSessionId, type SessionCookie } from 'agentrail-core';
 
 import type { Page } from './wire.js';
 
@@ -51,12 +51,12 @@ export function tabOf(window: Page): string {
     storage = window.sessionStorage;
   } catch (error) {
     // Reading `sessionStorage` itself throws where storage is denied.
-    if (error instanceof DOMException) return crypto.randomUUID();
+    if (error instanceof DOMException) return newId();
     throw error;
   }
   const kept = storage.getItem(TAB_KEY);
   if (kept !== null) return kept;
-  const minted = crypto.randomUUID();
+  const minted = newId();
   keep(storage, TAB_KEY, minted);
   return minted;
 }

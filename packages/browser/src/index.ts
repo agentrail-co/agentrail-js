@@ -1,4 +1,5 @@
 import {
+  newId,
   newSpanId,
   newTraceId,
   sessionCookie,
@@ -25,8 +26,9 @@ import { BROWSER_EVENT_KINDS, type Fingerprint, type Page } from './wire.js';
  * source's public key. The proofs come first and need no consent: the
  * session the edge set, a trace on every first-party call, the markers a
  * page was reached by, and the page's WebMCP tool calls. Behaviour (raw,
- * timing only) and the fingerprint are loaded apart, and each can be turned
- * off. Nothing is read of what is typed, pasted or chosen, nor of the DOM.
+ * timing only) and the fingerprint are loaded apart, and each is off unless
+ * the site turns it on: the fingerprint only once the visitor has consented.
+ * Nothing is read of what is typed, pasted or chosen, nor of the DOM.
  */
 
 export {
@@ -73,9 +75,12 @@ export interface BrowserOptions {
    * default, the page's host. The edge in front of the site takes the same.
    */
   readonly sessionCookieDomain?: string;
-  /** Raw behaviour, timing only. On unless turned off. */
+  /** Raw behaviour, timing only. Off unless turned on. */
   readonly behaviour?: boolean;
-  /** The tab's fingerprint. On unless turned off. */
+  /**
+   * The tab's fingerprint. Off unless turned on, which a site does only for
+   * a visitor who has consented to it.
+   */
   readonly fingerprint?: boolean;
   /**
    * Told of every call the collector refused or never got, and of a part
@@ -232,7 +237,7 @@ export function start(options: BrowserOptions): Agentrail {
   };
 
   const behaviourReady =
-    options.behaviour === false
+    options.behaviour !== true
       ? Promise.resolve()
       : import('./behaviour.js').then(({ recordBehaviour }) => {
           // Stopped while it loaded: it never starts.
@@ -256,7 +261,7 @@ export function start(options: BrowserOptions): Agentrail {
   // Once a tab: the pages after the first are the same browser.
   const fingerprinted = doneOnTab(window, 'agentrail_fingerprinted');
   const fingerprintReady =
-    options.fingerprint === false || fingerprinted.done
+    options.fingerprint !== true || fingerprinted.done
       ? Promise.resolve()
       : import('./fingerprint.js')
           // Stopped while it loaded or measured: not read, nor kept as read,
@@ -267,7 +272,7 @@ export function start(options: BrowserOptions): Agentrail {
           .then((components) => {
             if (components === null || stopped) return;
             const fingerprint: Fingerprint = {
-              id: crypto.randomUUID(),
+              id: newId(),
               page: on,
               components,
             };

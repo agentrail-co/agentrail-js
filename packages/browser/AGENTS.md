@@ -23,7 +23,11 @@ loaded apart, raw behaviour and the tab's fingerprint. How to install it:
 - The fingerprint is read by this package's own code under FingerprintJS's
   component names, and FingerprintJS itself is never a dependency: what
   this package measures is its own, and the script stays one small file.
-- Behaviour and the fingerprint each switch off; the proofs need no consent.
+- Behaviour and the fingerprint are off unless the site turns them on, the
+  fingerprint only with the visitor's consent; the proofs need no consent.
+- What runs on a page works on plain HTTP and in browsers from before 2023:
+  ids come from `newId` (core), never `crypto.randomUUID`, which a page has
+  only over HTTPS.
 
 Tests: `pnpm --filter agentrail-browser test`, on jsdom. Every call they
 send is checked against what the collector takes (`packages/contract`).

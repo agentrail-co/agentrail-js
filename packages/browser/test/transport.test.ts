@@ -137,7 +137,7 @@ describe('sending to the collector', () => {
   // call the next until the stack overflowed, and the page's own fetch
   // would reject.
   it('sends the frames buffered when the queue fills a call in that one send', async () => {
-    const site = onPage({ fingerprint: false });
+    const site = onPage({ behaviour: true });
     await site.agentrail.ready;
     window.dispatchEvent(
       new MouseEvent('mousemove', { clientX: 1, clientY: 2, bubbles: true }),
@@ -216,11 +216,12 @@ describe('sending to the collector', () => {
   );
 });
 
-describe('turning parts off, and the fingerprint', () => {
-  // Fails if someone records behaviour or a fingerprint a site turned off:
-  // a site that withheld consent would send them.
-  it('sends no behaviour and no fingerprint where the site turned them off', async () => {
-    const site = onPage({ behaviour: false, fingerprint: false });
+describe('turning parts on, and the fingerprint', () => {
+  // Fails if someone records behaviour or a fingerprint a site did not turn
+  // on: every site would fingerprint visitors who never consented, and fill
+  // the collector's largest table with frames nothing reads yet.
+  it('sends no behaviour and no fingerprint unless the site turns each on', async () => {
+    const site = onPage();
     await site.agentrail.ready;
     window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }));
     const calls = await site.sent();
@@ -235,13 +236,13 @@ describe('turning parts off, and the fingerprint', () => {
   // cannot read stop the rest, or reads it again on every page of a tab
   // (each page of a visit would send the same browser's fingerprint again).
   it('reads every component the vectoriser reads, each a value or why not, once a tab', async () => {
-    const site = onPage({ behaviour: false });
+    const site = onPage({ fingerprint: true });
     await site.agentrail.ready;
     const [fingerprint, ...more] = (await site.sent()).flatMap(
       (call) => call.fingerprints,
     );
     site.agentrail.stop();
-    const nextPage = onPage({ behaviour: false });
+    const nextPage = onPage({ fingerprint: true });
     await nextPage.agentrail.ready;
     expect(
       (await nextPage.sent()).flatMap((call) => call.fingerprints),
@@ -279,18 +280,18 @@ describe('turning parts off, and the fingerprint', () => {
       },
     });
     try {
-      const first = onPage({ behaviour: false });
+      const first = onPage({ fingerprint: true });
       first.agentrail.stop();
       await first.agentrail.ready;
       expect(reads).toBe(0);
 
-      const second = onPage({ behaviour: false });
+      const second = onPage({ fingerprint: true });
       onRead = () => {
         onRead = () => undefined;
         second.agentrail.stop();
       };
       await second.agentrail.ready;
-      const third = onPage({ behaviour: false });
+      const third = onPage({ fingerprint: true });
       await third.agentrail.ready;
 
       expect(

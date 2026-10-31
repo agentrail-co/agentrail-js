@@ -154,7 +154,7 @@ describe('the browser script', () => {
         );
       });
     try {
-      const site = onPage({ behaviour: false });
+      const site = onPage({ fingerprint: true });
       await site.agentrail.ready;
       const calls = await site.sent();
 
@@ -164,6 +164,43 @@ describe('the browser script', () => {
       expect(calls.flatMap((call) => call.fingerprints)).toHaveLength(1);
     } finally {
       setItem.mockRestore();
+    }
+  });
+
+  // Fails if someone calls `crypto.randomUUID` anywhere a page view, a
+  // route, a call, behaviour or the fingerprint takes (a page has it only
+  // over HTTPS: on a plain-HTTP site the script would record nothing), or
+  // reads `URLSearchParams.size`, missing before Safari 17 (a path with no
+  // query would be recorded as `/pricing?`, which never equals the edge's).
+  it('records a plain-HTTP page in an older browser: no crypto.randomUUID, no URLSearchParams.size', async () => {
+    const randomUUID = vi.spyOn(crypto, 'randomUUID').mockImplementation(() => {
+      throw new TypeError('crypto.randomUUID is not a function');
+    });
+    const size = vi
+      .spyOn(URLSearchParams.prototype, 'size', 'get')
+      .mockImplementation(() => undefined as unknown as number);
+    try {
+      const site = onPage({ behaviour: true, fingerprint: true });
+      window.history.pushState(null, '', '/pricing');
+      await window.fetch('/session');
+      await site.agentrail.ready;
+      window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }));
+      const calls = await site.sent();
+
+      expect(
+        calls.flatMap((call) =>
+          call.events.map((event) => [event.kind, event.http?.path]),
+        ),
+      ).toEqual([
+        ['page.view', '/'],
+        ['page.view', '/pricing'],
+        ['http.client', '/session'],
+      ]);
+      expect(calls.flatMap((call) => call.behaviour)).toHaveLength(1);
+      expect(calls.flatMap((call) => call.fingerprints)).toHaveLength(1);
+    } finally {
+      size.mockRestore();
+      randomUUID.mockRestore();
     }
   });
 

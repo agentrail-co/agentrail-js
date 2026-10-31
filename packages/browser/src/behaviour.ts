@@ -1,3 +1,5 @@
+import { newId } from 'agentrail-core';
+
 import {
   KEY_CLASSES,
   POINTER_TYPES,
@@ -126,7 +128,7 @@ export function recordBehaviour(
 
   function flush(): void {
     if (frames.length === 0) return;
-    context.emit({ id: crypto.randomUUID(), page: framesPage, frames });
+    context.emit({ id: newId(), page: framesPage, frames });
     frames = [];
   }
 

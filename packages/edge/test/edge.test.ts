@@ -1,4 +1,5 @@
 import {
+  CollectorUnavailableError,
   hashKeyIdOf,
   keyedHash,
   linkMarker,
@@ -11,9 +12,10 @@ import {
   type AgentrailEvent,
 } from 'agentrail-core';
 import { MARKERS, checkIngestRequest } from 'agentrail-contract';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
+  IdentifyError,
   cloudflare,
   createEdge,
   vercel,
@@ -29,14 +31,17 @@ const APP = 'app.example.test';
 /**
  * An edge in front of a stand-in origin, with what the origin was sent, the
  * component each call named, and every event the collector received, each
- * call checked against what the collector takes.
+ * call checked against what the collector takes, and taken unless `answer`
+ * says otherwise.
  */
 function edgeBefore(
   origin: (request: Request) => Response | Promise<Response>,
   options: Pick<
     EdgeOptions,
-    'identify' | 'sessionIdleTimeout' | 'sessionCookieDomain'
+    'identify' | 'sessionIdleTimeout' | 'sessionCookieDomain' | 'onError'
   > = {},
+  answer: (events: readonly AgentrailEvent[]) => Response = (sent) =>
+    Response.json({ accepted: sent.length }),
 ) {
   const forwarded: Request[] = [];
   const components: unknown[] = [];
@@ -50,10 +55,10 @@ function edgeBefore(
     hashKey: HASH_KEY,
     hosts: { [DOCS]: 'query', [APP]: 'path' },
     queryAllowlist: ['page'],
-    ...options,
     onError: (error) => {
       throw error;
     },
+    ...options,
     fetch: (_input, init) => {
       if (typeof init?.body !== 'string') throw new TypeError('no JSON body');
       const call: unknown = JSON.parse(init.body);
@@ -64,9 +69,7 @@ function edgeBefore(
       };
       components.push(checked.component);
       events.push(...checked.events);
-      return Promise.resolve(
-        Response.json({ accepted: checked.events.length }),
-      );
+      return Promise.resolve(answer(checked.events));
     },
   });
   const adapter: EdgeAdapter = {
@@ -436,6 +439,23 @@ describe('the edge', () => {
     ]);
   });
 
+  // Fails if someone lets a throwing identify lose the request's event, or
+  // hides the site's failure: no one would know its check is broken.
+  it("records the request without a principal when the site's identify throws, and tells onError", async () => {
+    const errors: Error[] = [];
+    const failure = new Error('token store unreachable');
+    const { send, events } = edgeBefore(() => new Response('ok'), {
+      identify: () => Promise.reject(failure),
+      onError: (error) => errors.push(error),
+    });
+    await send(new Request(`https://${APP}/users/me`));
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.principal).toBeNull();
+    expect(errors).toEqual([expect.any(IdentifyError)]);
+    expect(errors[0]?.cause).toBe(failure);
+  });
+
   // Fails if someone records a redirect's target as the origin wrote it: a
   // code or a token in its query would leave the site, which the allowlist
   // exists to stop.
@@ -463,6 +483,42 @@ describe('the edge', () => {
     );
     expect(events).toHaveLength(1);
     expect(events[0]?.http?.status).toBeNull();
+  });
+
+  // Fails if someone lets a call run past the 30 s Cloudflare gives
+  // waitUntil after the answer (it cancels the call there, and no one is
+  // told the events were lost), cuts the call well short of that, or stops
+  // giving it a deadline at all.
+  it('tries a call again while it can end within 25 s of the answer, and gives it up to onError past that', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      for (const [taken, tries] of [
+        [24_000, 2],
+        [26_000, 1],
+      ] as const) {
+        const errors: Error[] = [];
+        let calls = 0;
+        const { send } = edgeBefore(
+          () => new Response('ok'),
+          { onError: (error) => errors.push(error) },
+          (sent) => {
+            calls += 1;
+            if (calls > 1) return Response.json({ accepted: sent.length });
+            // The first try fails, `taken` after the answer.
+            vi.setSystemTime(Date.now() + taken);
+            return new Response('restarting', { status: 503 });
+          },
+        );
+        await send(new Request(`https://${DOCS}/`));
+
+        expect(calls).toBe(tries);
+        expect(errors).toEqual(
+          tries === 2 ? [] : [expect.any(CollectorUnavailableError)],
+        );
+      }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

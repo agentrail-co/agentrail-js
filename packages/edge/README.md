@@ -15,6 +15,16 @@ the request reaches the origin exactly as it was sent. A visitor's address,
 and any verified principal, leave the edge only hashed with the workspace's
 hash key.
 
+Requests one edge answers share collector calls: an event goes at once when
+no call is under way, and waits for the next one, with every other that
+waited, when one is. A quiet site sends a call per request; a busy one
+about one per round trip to the collector. A call that failed is tried
+again after a random wait, so isolates that failed together do not retry
+together, and never sooner than a `Retry-After` the collector sends. Every
+call ends within 25 seconds of its request's answer, inside the 30 seconds
+Cloudflare gives `waitUntil`; one that cannot is given up and told to
+`onError`, never left for the platform to cancel unseen.
+
 A visitor's session is a cookie the edge sets and the browser script reads
 (`agentrail_session`). As in web analytics, it ends after 30 minutes
 without a request, and a day after it began: every answer writes it again
@@ -26,14 +36,18 @@ for another 30 minutes.
 
 The secret and the hash key come from Agentrail's setup page, as the
 `AGENTRAIL_SECRET` and `AGENTRAIL_HASH_KEY` environment variables; the
-collector's address is the one the setup page shows.
+collector's address is the one the setup page shows. Create the edge once,
+on the first request, so the requests an isolate answers share calls; one
+created per request still works, and sends a call per request.
 
 ```js
 import { cloudflare, createEdge } from 'agentrail-edge';
 
+let edge;
+
 export default {
   fetch(request, env, ctx) {
-    const edge = createEdge({
+    edge ??= createEdge({
       collector: {
         endpoint: 'https://<collector>/ingest/events',
         secret: env.AGENTRAIL_SECRET,
@@ -50,7 +64,7 @@ export default {
 
 In Routing Middleware, `vercel({ waitUntil, origin })` takes `waitUntil`
 from `@vercel/functions` and fetches the site itself, since middleware cannot
-rewrite an answer it passes on.
+rewrite an answer it passes on. Create the edge once, outside the handler.
 
 ## Options
 
@@ -60,7 +74,9 @@ rewrite an answer it passes on.
 - `queryAllowlist`: query parameters a recorded path keeps; every other is
   dropped, and named as dropped.
 - `identify(request)`: the verified principal behind a request, by the site's
-  own check of its method, URL and headers. It runs after the answer.
+  own check of its method, URL and headers. It runs after the answer. A
+  check that throws is told to `onError` as an `IdentifyError`, and the
+  request is recorded without a principal.
 - `sessionIdleTimeout`: seconds without a request after which a session
   ends; 1800 (30 minutes) by default.
 - `sessionCookieDomain`: the domain a session is shared across, as
@@ -68,8 +84,9 @@ rewrite an answer it passes on.
   the one host. Give the browser script the same two values.
 - `sessionCookie`, `service`, `fetch`: the session cookie's name, the
   service the events name, and the fetch the collector's calls go through.
-- `onError(error)`: told of events that could not be sent; they are logged
-  otherwise. A failure to send never reaches the visitor.
+- `onError(error)`: told of events that could not be sent, and of an
+  `identify` that threw; they are logged otherwise. Neither ever reaches the
+  visitor.
 
 ## Licence
 

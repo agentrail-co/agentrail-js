@@ -4,6 +4,7 @@
  * the collector, with markers, a session and a trace of its own.
  */
 export {
+  IdentifyError,
   cloudflare,
   createEdge,
   vercel,

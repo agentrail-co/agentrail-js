@@ -1,0 +1,36 @@
+{
+  "name": "agentrail-core",
+  "version": "0.1.0-dev.1",
+  "description": "What every Agentrail component shares: the event the collector takes, markers, the keyed hash, W3C trace context, and the client that sends events.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agentrail-co/agentrail-js.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/agentrail-co/agentrail-js/tree/main/packages/core#readme",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "agentrail-contract": "workspace:*"
+  }
+}

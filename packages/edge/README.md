@@ -9,8 +9,16 @@ recording never slows a request.
 In an answer meant for agents (Markdown, `llms.txt`), every link to the
 site's own hosts is marked, so the request an agent makes by following one
 is joined to the page it came from. The marker comes off before the origin
-sees the request. A visitor's address, and any verified principal, leave
-the edge only hashed with the workspace's hash key.
+sees the request, and only a real one: an `h` parameter or an `/h/` path
+that does not read as a marker (an image's `h=600`) is the site's own, and
+the request reaches the origin exactly as it was sent. A visitor's address,
+and any verified principal, leave the edge only hashed with the workspace's
+hash key.
+
+A visitor's session is a cookie the edge sets and the browser script reads
+(`agentrail_session`). As in web analytics, it ends after 30 minutes
+without a request, and a day after it began: every answer writes it again
+for another 30 minutes.
 
 > Pre-release: not on npm yet.
 
@@ -53,6 +61,11 @@ rewrite an answer it passes on.
   dropped, and named as dropped.
 - `identify(request)`: the verified principal behind a request, by the site's
   own check of its method, URL and headers. It runs after the answer.
+- `sessionIdleTimeout`: seconds without a request after which a session
+  ends; 1800 (30 minutes) by default.
+- `sessionCookieDomain`: the domain a session is shared across, as
+  `example.com` for `docs.example.com` and `app.example.com`; by default,
+  the one host. Give the browser script the same two values.
 - `sessionCookie`, `service`, `fetch`: the session cookie's name, the
   service the events name, and the fetch the collector's calls go through.
 - `onError(error)`: told of events that could not be sent; they are logged

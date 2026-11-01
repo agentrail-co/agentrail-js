@@ -8,7 +8,7 @@ collector, which links the steps into journeys.
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`agentrail-edge`](packages/edge)       | In front of a site on Cloudflare Workers, Vercel or any Fetch API runtime: records each request, and marks the links in answers meant for agents. |
 | [`agentrail-browser`](packages/browser) | The script on a site's pages: page views, the trace on the page's own calls, and WebMCP tool calls.                                               |
-| [`agentrail-core`](packages/core)       | What both share: the event the collector takes, markers, the keyed hash, W3C trace context, and the client that sends events.                     |
+| [`agentrail-core`](packages/core)       | What both share: the event the collector takes, markers, the keyed hash, W3C trace context, the session, and the client that sends events.        |
 
 **Pre-release.** Not on npm yet. The first versions will be published under
 npm's `next` tag.

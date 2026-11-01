@@ -4,20 +4,18 @@
  * before the check, so each link of a response is proven on its own. The
  * engine reads them back case-folded, with Crockford's look-alikes, and
  * refuses any whose check fails (docs/research/agent-journey-correlation.md,
- * 5.2 and 15.1). This is the minting half only, and the same arithmetic as
- * the engine's; `test/parity.test.ts` proves the engine reads what it mints.
+ * 5.2 and 15.1). This is the same arithmetic and the same reading as the
+ * engine's; `test/parity.test.ts` proves the two agree.
  */
 
 const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const BASE = ALPHABET.length;
 const PAYLOAD_LENGTH = 13;
+const LANE_LENGTH = 2;
 const RANDOM_BYTES = 8;
 
 /** The last lane a response's links can take; past it a link goes unmarked. */
 export const MAX_LINK_INDEX = BASE * BASE - 1;
-
-/** A response marker is 14 characters, a link's lane of one 16. */
-export const MARKER_PATTERN = /^(?:[0-9A-Za-z]{16}|[0-9A-Za-z]{14})$/u;
 
 /** A marker that is not one this package minted, or a lane out of range. */
 export class MarkerError extends Error {
@@ -66,6 +64,55 @@ export function mintMarker(random: Uint8Array): string {
 /** A response marker from this runtime's strong random source. */
 export function newMarker(): string {
   return mintMarker(crypto.getRandomValues(new Uint8Array(RANDOM_BYTES)));
+}
+
+/** How the engine reads a value: a marker, or why it is none. */
+export type ParsedMarker =
+  | {
+      readonly valid: true;
+      /** The response marker, canonical, without its check character. */
+      readonly base: string;
+      /** The lane of a link's marker; null for a response's own. */
+      readonly link: number | null;
+    }
+  | {
+      readonly valid: false;
+      readonly reason: 'length' | 'alphabet' | 'check';
+    };
+
+/**
+ * Reads a value as an agent sent it back, as the engine does: case-folded,
+ * `-` dropped, I and L read as 1 and O as 0; then 14 or 16 characters of the
+ * alphabet whose check character holds. Only a value it reads as valid is a
+ * marker: anything else, an image's `h=600` or a path's `/h/getting-started`,
+ * is the site's own.
+ */
+export function parseMarker(raw: string): ParsedMarker {
+  const text = raw
+    .toUpperCase()
+    .replaceAll('-', '')
+    .replaceAll('I', '1')
+    .replaceAll('L', '1')
+    .replaceAll('O', '0');
+  if (
+    text.length !== PAYLOAD_LENGTH + 1 &&
+    text.length !== PAYLOAD_LENGTH + LANE_LENGTH + 1
+  )
+    return { valid: false, reason: 'length' };
+  const values: number[] = [];
+  for (const character of text) {
+    const value = ALPHABET.indexOf(character);
+    if (value === -1) return { valid: false, reason: 'alphabet' };
+    values.push(value);
+  }
+  const check = values.pop();
+  if (check !== checkValue(values)) return { valid: false, reason: 'check' };
+  const [high, low] = values.slice(PAYLOAD_LENGTH);
+  return {
+    valid: true,
+    base: text.slice(0, PAYLOAD_LENGTH),
+    link: high === undefined || low === undefined ? null : high * BASE + low,
+  };
 }
 
 /** The marker for one link of a response: its lane. */

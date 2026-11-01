@@ -3,9 +3,12 @@ import {
   formatTraceparent,
   hashKeyIdOf,
   keyedHash,
+  newSessionId,
   newSpanId,
   newTraceId,
+  parseMarker,
   parseTraceparent,
+  sessionCookie,
   VERSION,
   type AgentrailEvent,
   type Collector,
@@ -22,7 +25,8 @@ import { MARKER_PARAMETER, markLinks, type MarkedHosts } from './links.js';
  *
  * - a marker in every link of an agent-facing answer (Markdown, `llms.txt`),
  *   a lane per link, after the cache, so no two readers share one;
- * - a session cookie it sets itself, which the browser script reads too;
+ * - a session cookie it sets itself and the browser script reads too, which
+ *   ends after 30 minutes without a request, and a day after it began;
  * - a trace of its own for every request, passed to the origin in
  *   `traceparent`, with any caller's trace kept as a span link only: a public
  *   endpoint never takes its parent from outside;
@@ -33,11 +37,8 @@ import { MARKER_PARAMETER, markLinks, type MarkedHosts } from './links.js';
  * `waitUntil`, so recording never slows a request.
  */
 
-/** The response marker a request carried in a path prefix, and the rest of the path. */
-const PATH_MARKER = /^\/h\/([0-9A-Za-z]{16}|[0-9A-Za-z]{14})(?=\/|$)/u;
-/** What this edge mints for a session: a version 4 UUID. */
-const MINTED_SESSION =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+/** A path's leading `/h/<segment>`: a link's marker, when the segment reads as one. */
+const PATH_MARKER = /^\/h\/([^/]+)/u;
 /** The most of an agent-facing answer read to mark its links; a larger one passes as it came. */
 const MARKABLE_BYTES = 2 * 1024 * 1024;
 
@@ -65,6 +66,16 @@ export interface EdgeOptions {
   readonly queryAllowlist?: readonly string[];
   /** The session cookie's name. */
   readonly sessionCookie?: string;
+  /**
+   * Seconds without a request after which a visitor's session ends; 30
+   * minutes by default. The browser script on the same site takes the same.
+   */
+  readonly sessionIdleTimeout?: number;
+  /**
+   * The domain a visitor's session is shared across, as `example.com` for
+   * `docs.example.com` and `app.example.com`; by default, the one host.
+   */
+  readonly sessionCookieDomain?: string;
   /**
    * The verified principal behind a request, by the site's own check of its
    * method, URL and headers. It runs after the answer.
@@ -105,12 +116,24 @@ interface Observed {
   linksOut: readonly string[];
 }
 
-function cookieOf(request: Request, name: string): string | null {
-  for (const part of (request.headers.get('cookie') ?? '').split(';')) {
-    const [key, ...value] = part.trim().split('=');
-    if (key === name) return value.join('=');
-  }
-  return null;
+/**
+ * The markers a query carries in `h`, and the query without them, every
+ * other pair exactly as it came: a value that does not read as a marker is
+ * the site's own, and stays.
+ */
+function markersOffQuery(search: string): { markers: string[]; rest: string } {
+  const markers: string[] = [];
+  const rest = search
+    .slice(1)
+    .split('&')
+    .filter((pair) => {
+      const [entry] = new URLSearchParams(pair);
+      if (entry?.[0] !== MARKER_PARAMETER || !parseMarker(entry[1]).valid)
+        return true;
+      markers.push(entry[1]);
+      return false;
+    });
+  return { markers, rest: rest.join('&') };
 }
 
 /**
@@ -183,13 +206,12 @@ async function readUpTo(
 }
 
 export function createEdge(options: EdgeOptions): Edge {
-  const {
-    hashKey,
-    hosts,
-    sessionCookie = 'agentrail_session',
-    identify,
-    service,
-  } = options;
+  const { hashKey, hosts, identify, service } = options;
+  const cookie = sessionCookie({
+    name: options.sessionCookie ?? 'agentrail_session',
+    idleTimeout: options.sessionIdleTimeout,
+    domain: options.sessionCookieDomain,
+  });
   const allowlist = new Set([
     MARKER_PARAMETER,
     ...(options.queryAllowlist ?? []),
@@ -379,15 +401,20 @@ export function createEdge(options: EdgeOptions): Edge {
     async handle(request, adapter) {
       const start = Date.now();
       const url = new URL(request.url);
-      const seen = url.searchParams.getAll(MARKER_PARAMETER);
-      const pathMarker = PATH_MARKER.exec(url.pathname);
-      if (pathMarker?.[1] !== undefined) seen.push(pathMarker[1]);
+      const query = markersOffQuery(url.search);
+      const segment = PATH_MARKER.exec(url.pathname)?.[1];
+      const pathMarker =
+        segment !== undefined && parseMarker(segment).valid ? segment : null;
+      const seen =
+        pathMarker === null ? query.markers : [...query.markers, pathMarker];
 
-      // What the origin sees: the markers taken off, and this edge's trace.
+      // What the origin sees: the markers taken off and nothing else of the
+      // address changed, and this edge's trace.
       const originUrl = new URL(url);
-      originUrl.searchParams.delete(MARKER_PARAMETER);
+      if (query.markers.length > 0) originUrl.search = query.rest;
       if (pathMarker !== null)
-        originUrl.pathname = url.pathname.slice(pathMarker[0].length) || '/';
+        originUrl.pathname =
+          url.pathname.slice(`/h/${pathMarker}`.length) || '/';
       const caller = parseTraceparent(request.headers.get('traceparent'));
       const span = { traceId: newTraceId(), spanId: newSpanId() };
       const headers = new Headers(request.headers);
@@ -411,9 +438,12 @@ export function createEdge(options: EdgeOptions): Edge {
         url: request.url,
         headers: new Headers(request.headers),
       };
-      const cookie = cookieOf(request, sessionCookie);
-      const kept = cookie !== null && MINTED_SESSION.test(cookie);
-      const session = kept ? cookie : crypto.randomUUID();
+      // A session a day old starts the next, which names no previous one:
+      // the engine would join the two again. One idle too long the browser
+      // has already dropped.
+      const session =
+        cookie.read(request.headers.get('cookie') ?? '', start) ??
+        newSessionId(start);
       const observed: Observed = {
         status: null,
         location: null,
@@ -433,11 +463,11 @@ export function createEdge(options: EdgeOptions): Edge {
         observed.status = answer.status;
         observed.location = answer.headers.get('location');
         observed.contentType = answer.headers.get('content-type');
-        if (kept) return answer;
+        // On every answer, so the session lasts another idle timeout.
         const withCookie = new Response(answer.body, answer);
         withCookie.headers.append(
           'set-cookie',
-          `${sessionCookie}=${session}; Path=/; SameSite=Lax${url.protocol === 'https:' ? '; Secure' : ''}`,
+          cookie.write(session, url.protocol === 'https:'),
         );
         return withCookie;
       } finally {

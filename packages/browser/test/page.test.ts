@@ -1,10 +1,15 @@
-import { linkMarker, newMarker } from 'agentrail-core';
+import {
+  linkMarker,
+  newMarker,
+  newSessionId,
+  sessionStartOf,
+} from 'agentrail-core';
 import { describe, expect, it, vi } from 'vitest';
 
 import { BrowserAlreadyStartedError, start } from '../src/index.js';
 import { API, COLLECTOR, KEY, onPage } from './support/page.js';
 
-const SESSION = '2f1d1c3e-8a4b-4c5d-9e6f-0a1b2c3d4e5f';
+const SESSION = newSessionId(Date.now());
 
 /** The events the collector got. */
 async function eventsOf(site: ReturnType<typeof onPage>) {
@@ -77,26 +82,64 @@ describe('the browser script', () => {
 
   // Fails if someone mints a session in another form than the edge's (the
   // edge would replace it, and the page and its requests would hold two),
-  // keeps a cookie the edge could not have set, or mints a tab per page (a
-  // reload would be another clock).
-  it('mints the session as the edge does when there is none, replaces one the edge could not have set, and keeps the tab across a reload', async () => {
-    document.cookie = 'agentrail_session=forged; Path=/';
-    const first = onPage({ behaviour: false, fingerprint: false });
-    const [before] = await eventsOf(first);
-    first.agentrail.stop();
-    const second = onPage({ behaviour: false, fingerprint: false });
-    const [after] = await eventsOf(second);
+  // keeps a cookie the edge could not have set or a session a day old (a
+  // session would never end), or mints a tab per page (a reload would be
+  // another clock).
+  it('mints the session as the edge does when there is none, replaces one the edge could not have set or a day old, and keeps the tab across a reload', async () => {
+    const dayOld = newSessionId(Date.now() - 25 * 60 * 60 * 1000);
+    for (const replaced of ['forged', crypto.randomUUID(), dayOld]) {
+      document.cookie = `agentrail_session=${replaced}; Path=/`;
+      const minted = Date.now();
+      const first = onPage({ behaviour: false, fingerprint: false });
+      const [before] = await eventsOf(first);
+      first.agentrail.stop();
+      const second = onPage({ behaviour: false, fingerprint: false });
+      const [after] = await eventsOf(second);
+      second.agentrail.stop();
 
-    expect(before?.session?.id).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
-    );
-    expect(document.cookie).toContain(
-      `agentrail_session=${before?.session?.id ?? ''}`,
-    );
-    expect(after?.session?.id).toBe(before?.session?.id);
-    expect(after?.resource.serviceInstanceId).toBe(
-      before?.resource.serviceInstanceId,
-    );
+      const session = before?.session?.id ?? '';
+      expect(sessionStartOf(session), replaced).toBeGreaterThanOrEqual(minted);
+      expect(document.cookie, replaced).toContain(
+        `agentrail_session=${session}`,
+      );
+      expect(after?.session?.id, replaced).toBe(session);
+      expect(after?.resource.serviceInstanceId, replaced).toBe(
+        before?.resource.serviceInstanceId,
+      );
+    }
+  });
+
+  // Fails if someone writes the cookie only when minting one (the browser
+  // would drop a busy visitor's session 30 minutes after their first page),
+  // or a route goes on with the page's first session once the cookie is
+  // gone (a tab left open would carry a session past its end).
+  it("goes on with the edge's session, writing it again on every page view for another idle timeout, and starts the next once it is gone", async () => {
+    document.cookie = `agentrail_session=${SESSION}; Path=/`;
+    const writes = vi.spyOn(document, 'cookie', 'set');
+    try {
+      const site = onPage({ behaviour: false, fingerprint: false });
+      window.history.pushState(null, '', '/pricing');
+      // What the browser does once the idle timeout has passed.
+      document.cookie = 'agentrail_session=; Max-Age=0; Path=/';
+      window.history.pushState(null, '', '/signup');
+      const views = await eventsOf(site);
+
+      const next = views[2]?.session?.id ?? '';
+      expect(views.map((view) => view.session?.id)).toEqual([
+        SESSION,
+        SESSION,
+        next,
+      ]);
+      expect(next).not.toBe(SESSION);
+      expect(writes.mock.calls.map(([written]) => written)).toEqual([
+        `agentrail_session=${SESSION}; Path=/; Max-Age=1800; SameSite=Lax`,
+        `agentrail_session=${SESSION}; Path=/; Max-Age=1800; SameSite=Lax`,
+        'agentrail_session=; Max-Age=0; Path=/',
+        `agentrail_session=${next}; Path=/; Max-Age=1800; SameSite=Lax`,
+      ]);
+    } finally {
+      writes.mockRestore();
+    }
   });
 
   // Fails if someone lets a full session storage throw out of start: a site

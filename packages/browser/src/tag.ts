@@ -9,7 +9,8 @@ import { start, type Agentrail, type BrowserOptions } from './index.js';
  * the origin the script came from unless `data-collector` names another;
  * `data-first-party` lists the other origins whose calls carry the trace,
  * comma-separated; `data-behaviour="off"` and `data-fingerprint="off"` turn
- * those parts off.
+ * those parts off; `data-session-idle` (seconds) and `data-session-domain`
+ * are the session's idle timeout and the domain it is shared across.
  */
 
 /** The script's tag names no key: the snippet was pasted without it. */
@@ -34,12 +35,20 @@ export function optionsOf(
       "Agentrail's script tag has no data-key. Copy the snippet again from Journeys, setup, with the browser source's key in it.",
     );
   const queryAllowlist = listOf(dataset.queryAllowlist);
+  const { sessionIdle, sessionDomain } = dataset;
   return {
     key,
     collector:
       dataset.collector ?? new URL('/ingest/browser', tag.src).toString(),
     firstParty: listOf(dataset.firstParty),
     ...(queryAllowlist.length > 0 ? { queryAllowlist } : {}),
+    // Read as written: `start` refuses one that is not whole seconds.
+    ...(sessionIdle === undefined
+      ? {}
+      : { sessionIdleTimeout: Number(sessionIdle) }),
+    ...(sessionDomain === undefined
+      ? {}
+      : { sessionCookieDomain: sessionDomain }),
     behaviour: dataset.behaviour !== 'off',
     fingerprint: dataset.fingerprint !== 'off',
   };

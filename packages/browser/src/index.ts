@@ -1,6 +1,7 @@
 import {
   newSpanId,
   newTraceId,
+  sessionCookie,
   VERSION,
   type AgentrailEvent,
   type SpanContext,
@@ -62,6 +63,16 @@ export interface BrowserOptions {
   readonly queryAllowlist?: readonly string[];
   /** The edge's session cookie. */
   readonly sessionCookie?: string;
+  /**
+   * Seconds without a request after which a visitor's session ends; 30
+   * minutes by default. The edge in front of the site takes the same.
+   */
+  readonly sessionIdleTimeout?: number;
+  /**
+   * The domain a visitor's session is shared across, as `example.com`; by
+   * default, the page's host. The edge in front of the site takes the same.
+   */
+  readonly sessionCookieDomain?: string;
   /** Raw behaviour, timing only. On unless turned off. */
   readonly behaviour?: boolean;
   /** The tab's fingerprint. On unless turned off. */
@@ -89,6 +100,13 @@ const started = new WeakSet<Page>();
 /** Starts the script on a page: once a page, as early as it can load. */
 export function start(options: BrowserOptions): Agentrail {
   const window = options.window ?? globalThis.window;
+  // Before the page counts as started, so a start refused for its options
+  // can be made again with them fixed.
+  const cookie = sessionCookie({
+    name: options.sessionCookie ?? 'agentrail_session',
+    idleTimeout: options.sessionIdleTimeout,
+    domain: options.sessionCookieDomain,
+  });
   if (started.has(window))
     throw new BrowserAlreadyStartedError(
       'Agentrail is already recording this page.',
@@ -101,7 +119,7 @@ export function start(options: BrowserOptions): Agentrail {
     allowlist: new Set([MARKER_PARAMETER, ...(options.queryAllowlist ?? [])]),
     service: options.service ?? window.location.hostname,
     tab,
-    session: sessionOf(document, options.sessionCookie ?? 'agentrail_session'),
+    session: sessionOf(document, cookie),
     userAgent: navigator.userAgent,
   };
   const firstParty = new Set([
@@ -169,8 +187,13 @@ export function start(options: BrowserOptions): Agentrail {
   }
   viewed();
 
-  // A route a single-page app moves to is a page view of its own; a
+  // A route a single-page app moves to is a page view of its own, and goes
+  // on with the session, or starts the next, as a page load does; a
   // replaced entry is the same page.
+  function routed(): void {
+    recorder.session = sessionOf(document, cookie);
+    viewed();
+  }
   // Kept unbound: called again with the history it came from as `this`.
   // eslint-disable-next-line @typescript-eslint/unbound-method
   const { pushState } = window.history;
@@ -179,10 +202,10 @@ export function start(options: BrowserOptions): Agentrail {
     ...args: Parameters<History['pushState']>
   ) {
     pushState.apply(this, args);
-    viewed();
+    routed();
   };
   const onPopState = () => {
-    viewed();
+    routed();
   };
   window.addEventListener('popstate', onPopState);
   undo.push(() => {

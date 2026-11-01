@@ -24,7 +24,8 @@ export interface Recorder {
   readonly allowlist: ReadonlySet<string>;
   readonly service: string;
   readonly tab: string;
-  readonly session: string;
+  /** The session the last page view went on with. */
+  session: string;
   readonly userAgent: string;
 }
 

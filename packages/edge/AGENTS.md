@@ -4,7 +4,8 @@ The edge adapter in front of a customer's site, on the Fetch API:
 `createEdge(options).handle(request, cloudflare(ctx))` in a Worker, or
 `vercel({ waitUntil, origin })` in Vercel Routing Middleware. One event per
 request goes to the collector after the answer, through the platform's
-`waitUntil`. How to run it: [README.md](README.md).
+`waitUntil`, in calls the requests one edge answers share. How to run it:
+[README.md](README.md).
 
 ## Rules no machine can check
 
@@ -20,6 +21,10 @@ request goes to the collector after the answer, through the platform's
 - The edge never breaks the site: an answer that is not agent-facing passes
   as it came, and a failure to send events is told to `onError`, never to the
   visitor.
+- A call goes from a request still waiting on it, and ends within 25 s of
+  that request's answer: Cloudflare cancels what a request left running once
+  its `waitUntil` has ended, or 30 s after the answer, and no one is told.
+  The local check is `wrangler dev`; no unit test can see a cancellation.
 
 Tests: `pnpm --filter agentrail-edge test`. Every call they send is checked
 against what the collector takes (`packages/contract`).

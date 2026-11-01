@@ -34,13 +34,28 @@ import { MARKER_PARAMETER, markLinks, type MarkedHosts } from './links.js';
  *   workspace's key before anything leaves.
  *
  * The events go to the collector after the answer, through the platform's
- * `waitUntil`, so recording never slows a request.
+ * `waitUntil`, so recording never slows a request. Requests one edge answers
+ * share calls: what is sent while a call is out goes in the next, together,
+ * so a site creates its edge once, not per request.
  */
 
 /** A path's leading `/h/<segment>`: a link's marker, when the segment reads as one. */
 const PATH_MARKER = /^\/h\/([^/]+)/u;
 /** The most of an agent-facing answer read to mark its links; a larger one passes as it came. */
 const MARKABLE_BYTES = 2 * 1024 * 1024;
+/**
+ * How long after the origin answered the call carrying a request's event may
+ * run, every try and wait included. Cloudflare gives `waitUntil` 30 s after
+ * the answer is sent, the least of the platforms, and cancels what is still
+ * running then; counted from before it is sent, 25 s leaves room for a slow
+ * `identify`.
+ */
+const SEND_WITHIN_MS = 25_000;
+
+/** The site's `identify` threw: the request is recorded without a principal. */
+export class IdentifyError extends Error {
+  override readonly name = 'IdentifyError';
+}
 
 /**
  * What the site's own check reads of a request: never its body, which has
@@ -85,7 +100,10 @@ export interface EdgeOptions {
   ) => Principal | null | Promise<Principal | null>;
   /** The service the events name; the request's host by default. */
   readonly service?: string;
-  /** Told of events that could not be sent. Logs by default. */
+  /**
+   * Told of events that could not be sent, and of an `identify` that threw.
+   * Logs by default.
+   */
   readonly onError?: (error: Error) => void;
   /** The fetch the collector's calls go through; the platform's own by default. */
   readonly fetch?: typeof fetch;
@@ -207,6 +225,11 @@ async function readUpTo(
 
 export function createEdge(options: EdgeOptions): Edge {
   const { hashKey, hosts, identify, service } = options;
+  const onError =
+    options.onError ??
+    ((error: Error) => {
+      console.error('agentrail:', error);
+    });
   const cookie = sessionCookie({
     name: options.sessionCookie ?? 'agentrail_session',
     idleTimeout: options.sessionIdleTimeout,
@@ -229,7 +252,7 @@ export function createEdge(options: EdgeOptions): Edge {
         surfaces: ['edge'],
         hashKeyId,
       },
-      ...(options.onError ? { onError: options.onError } : {}),
+      onError,
       ...(options.fetch ? { fetch: options.fetch } : {}),
     }),
   );
@@ -267,6 +290,26 @@ export function createEdge(options: EdgeOptions): Edge {
       location: `${target.protocol}//${target.host}${path}`,
       redaction: dropped ? 'query_outside_allowlist' : null,
     };
+  }
+
+  /**
+   * The principal the site's own check names. A check that throws is the
+   * site's to fix, and is told to `onError`; the request is still a step the
+   * agent took, recorded without the principal the check could not name.
+   */
+  async function principalOf(request: RequestHead): Promise<Principal | null> {
+    if (identify === undefined) return null;
+    try {
+      return await identify(request);
+    } catch (error) {
+      onError(
+        new IdentifyError(
+          "The site's identify threw; the request is recorded without a principal.",
+          { cause: error },
+        ),
+      );
+      return null;
+    }
   }
 
   async function marked(
@@ -319,7 +362,7 @@ export function createEdge(options: EdgeOptions): Edge {
     const host = url.host;
     const { path, dropped } = recordedPath(url);
     const location = recordedLocation(observed.location, url);
-    const principal = identify === undefined ? null : await identify(request);
+    const principal = await principalOf(request);
     const actingUserId = principal?.actingUserId ?? null;
     return {
       schemaVersion: 1,
@@ -477,7 +520,7 @@ export function createEdge(options: EdgeOptions): Edge {
         adapter.waitUntil(
           (async () => {
             const sending = await collector;
-            sending.enqueue(
+            await sending.send(
               await eventOf({
                 request: head,
                 url,
@@ -491,8 +534,8 @@ export function createEdge(options: EdgeOptions): Edge {
                 seen,
                 observed,
               }),
+              end + SEND_WITHIN_MS,
             );
-            await sending.flush();
           })(),
         );
       }

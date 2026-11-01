@@ -8,9 +8,10 @@ import { start, type Agentrail, type BrowserOptions } from './index.js';
  * It reads its options from its own tag and starts once. The collector is
  * the origin the script came from unless `data-collector` names another;
  * `data-first-party` lists the other origins whose calls carry the trace,
- * comma-separated; `data-behaviour="off"` and `data-fingerprint="off"` turn
- * those parts off; `data-session-idle` (seconds) and `data-session-domain`
- * are the session's idle timeout and the domain it is shared across.
+ * comma-separated; `data-behaviour="on"` and `data-fingerprint="on"` turn
+ * those parts on, the fingerprint only for a visitor who has consented;
+ * `data-session-idle` (seconds) and `data-session-domain` are the session's
+ * idle timeout and the domain it is shared across.
  */
 
 /** The script's tag names no key: the snippet was pasted without it. */
@@ -49,8 +50,8 @@ export function optionsOf(
     ...(sessionDomain === undefined
       ? {}
       : { sessionCookieDomain: sessionDomain }),
-    behaviour: dataset.behaviour !== 'off',
-    fingerprint: dataset.fingerprint !== 'off',
+    behaviour: dataset.behaviour === 'on',
+    fingerprint: dataset.fingerprint === 'on',
   };
 }
 

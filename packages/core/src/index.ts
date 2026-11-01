@@ -33,6 +33,7 @@ export {
   type SessionCookieOptions,
 } from './session.js';
 export { hashKeyIdOf, keyedHash } from './hash.js';
+export { newId } from './id.js';
 export { VERSION } from './version.js';
 export {
   formatTraceparent,

@@ -20,7 +20,7 @@ describe('the behaviour recorder', () => {
   // (hold times could not be read), or loses Backspace's class (typing
   // corrections could not be counted).
   it("keeps a key's press and class, never the key, and that a paste, an input and a change happened, never what", async () => {
-    const site = onPage({ fingerprint: false });
+    const site = onPage({ behaviour: true });
     await site.agentrail.ready;
     const field = document.body.appendChild(document.createElement('input'));
     field.value = 'hunter2';
@@ -69,7 +69,7 @@ describe('the behaviour recorder', () => {
   // calls a move with no pointer event before it a real one: a page driven
   // by an automation protocol would look moved by hand.
   it('keeps every mouse move with what the browser coalesced into it, and a dispatched move as none', async () => {
-    const site = onPage({ fingerprint: false });
+    const site = onPage({ behaviour: true });
     await site.agentrail.ready;
     const moved = new PointerEvent('pointermove', {
       pointerType: 'mouse',
@@ -96,7 +96,7 @@ describe('the behaviour recorder', () => {
   // Fails if someone records scrolls as one target (FP-Agent reads each
   // element's scrolls apart), or names an element by anything of the DOM.
   it('numbers each scrolled element by its first use, and the document as 0', async () => {
-    const site = onPage({ fingerprint: false });
+    const site = onPage({ behaviour: true });
     await site.agentrail.ready;
     const pane = document.body.appendChild(document.createElement('div'));
     pane.id = 'customer-private-pane';
@@ -120,7 +120,7 @@ describe('the behaviour recorder', () => {
   // Fails if someone drops the trust flag from a frame: a paste, an input or
   // a scroll a script dispatched would read as a person's.
   it("marks every frame a script dispatched as no person's", async () => {
-    const site = onPage({ fingerprint: false });
+    const site = onPage({ behaviour: true });
     await site.agentrail.ready;
     const field = document.body.appendChild(document.createElement('input'));
     for (const type of ['paste', 'input', 'change'])
@@ -152,7 +152,7 @@ describe('the behaviour recorder', () => {
   // has gone: a background tab the browser ends without a pagehide would
   // lose its last frame.
   it('sends the frame of the page being hidden in its beacon', async () => {
-    const site = onPage({ fingerprint: false });
+    const site = onPage({ behaviour: true });
     await site.agentrail.ready;
     Object.defineProperty(document, 'visibilityState', {
       configurable: true,
@@ -180,7 +180,7 @@ describe('the behaviour recorder', () => {
   // rather than the one they happened on: a route change would hand the
   // last page's behaviour to the next.
   it('files each batch under the page view its frames happened on', async () => {
-    const site = onPage({ fingerprint: false });
+    const site = onPage({ behaviour: true });
     await site.agentrail.ready;
     window.dispatchEvent(
       new MouseEvent('mousedown', { button: 0, bubbles: true }),

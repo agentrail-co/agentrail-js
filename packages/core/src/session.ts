@@ -1,3 +1,5 @@
+import { hexOf } from './id.js';
+
 /**
  * A visitor's session, kept as web analytics and PostHog keep one: it ends
  * after 30 minutes without a request, and lasts 24 hours at most. The edge
@@ -21,12 +23,6 @@ const SESSION_ID =
 /** An idle timeout a cookie cannot carry. */
 export class SessionTimeoutError extends Error {
   override readonly name = 'SessionTimeoutError';
-}
-
-function hexOf(bytes: Uint8Array): string {
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join(
-    '',
-  );
 }
 
 /**

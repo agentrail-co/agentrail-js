@@ -1,4 +1,4 @@
-import type { AgentrailEvent, SpanContext } from 'agentrail-core';
+import { newId, type AgentrailEvent, type SpanContext } from 'agentrail-core';
 
 import { BROWSER_EVENT_KINDS } from './wire.js';
 
@@ -34,11 +34,12 @@ export function recordedPath(
   url: URL,
   allowlist: ReadonlySet<string>,
 ): { path: string; dropped: boolean } {
+  // Joined, not counted: `URLSearchParams` has no `size` before Safari 17.
   const kept = new URLSearchParams(
     [...url.searchParams].filter(([name]) => allowlist.has(name)),
-  );
+  ).toString();
   return {
-    path: `${url.pathname}${kept.size === 0 ? '' : `?${kept.toString()}`}`,
+    path: kept === '' ? url.pathname : `${url.pathname}?${kept}`,
     dropped: [...url.searchParams.keys()].some((name) => !allowlist.has(name)),
   };
 }
@@ -80,7 +81,7 @@ export function browserEvent(recorder: Recorder, step: Step): AgentrailEvent {
     step.url === null ? null : recordedPath(step.url, recorder.allowlist);
   return {
     schemaVersion: 1,
-    id: crypto.randomUUID(),
+    id: newId(),
     surface: 'browser',
     kind: step.kind,
     start: step.start,

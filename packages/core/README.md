@@ -16,7 +16,11 @@ tells `onError` of every call given up.
 `agentrail-edge` and `agentrail-browser` are built on it; a component of
 your own can be too.
 
-> Pre-release: not on npm yet.
+```sh
+npm install agentrail-core
+```
+
+Before 1.0, a minor version (0.1 to 0.2) may change what the package offers.
 
 ## Licence
 

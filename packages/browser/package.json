@@ -1,6 +1,6 @@
 {
   "name": "agentrail-browser",
-  "version": "0.1.0-dev.1",
+  "version": "0.1.0",
   "description": "The Agentrail browser script: on a site's pages, it records the steps a person or an agent in a browser takes.",
   "license": "Apache-2.0",
   "repository": {

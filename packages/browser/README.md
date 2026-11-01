@@ -10,7 +10,7 @@ site turns it on.
 
 Nothing is read of what is typed, pasted or chosen, nor of the page itself.
 
-> Pre-release: not on npm yet.
+Before 1.0, a minor version (0.1 to 0.2) may change what the package offers.
 
 ## The tag
 
@@ -34,6 +34,12 @@ Agentrail's setup page gives the tag, with the source's public key:
 The script is `dist/agentrail.js` in this package, one file.
 
 ## From code
+
+For a site that bundles the script itself:
+
+```sh
+npm install agentrail-browser
+```
 
 ```js
 import { start } from 'agentrail-browser';

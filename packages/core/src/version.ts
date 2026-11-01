@@ -4,4 +4,4 @@
  * own in every call. `test/version.test.ts` holds it to every package's
  * manifest.
  */
-export const VERSION = '0.1.0-dev.1';
+export const VERSION = '0.1.0';

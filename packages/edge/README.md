@@ -30,7 +30,11 @@ A visitor's session is a cookie the edge sets and the browser script reads
 without a request, and a day after it began: every answer writes it again
 for another 30 minutes.
 
-> Pre-release: not on npm yet.
+```sh
+npm install agentrail-edge
+```
+
+Before 1.0, a minor version (0.1 to 0.2) may change what the package offers.
 
 ## Cloudflare Workers
 

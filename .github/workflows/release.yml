@@ -5,7 +5,9 @@ name: Release
 # npm trusts this workflow and the `npm` environment (trusted publishing), so
 # no token is stored anywhere, and it records provenance: a signed link from
 # each package to this repository and commit. A pre-release (`0.1.0-dev.1`)
-# goes to the `next` tag; a release to `latest`.
+# goes to the `next` tag; a release to `latest`. Only the repository's
+# admins can push a `v*` tag (a tag ruleset), and the `npm` environment
+# waits for approval before the job starts.
 on:
   push:
     tags: ['v*']
@@ -56,6 +58,11 @@ jobs:
           for package in core edge browser; do
             pnpm --dir "packages/${package}" pack --pack-destination "${RUNNER_TEMP}/packages"
           done
+      # npm never takes a version twice, so a run that published some
+      # packages and then failed (one package's trusted publisher mistyped,
+      # say) would stop at the first one on a re-run. A version npm already
+      # has is skipped instead, and the rest are published. A lookup that
+      # fails fails the step.
       - name: Publish
         run: |
           version="$(node -p "require('./packages/core/package.json').version")"
@@ -64,5 +71,11 @@ jobs:
             *) tag=latest ;;
           esac
           for package in core edge browser; do
-            npm publish "${RUNNER_TEMP}/packages/agentrail-${package}-${version}.tgz" --tag "$tag"
+            name="agentrail-${package}"
+            published="$(npm view "$name" versions --json | node -e "console.log(JSON.parse(require('node:fs').readFileSync(0, 'utf8')).includes(process.argv[1]))" "$version")"
+            if [ "$published" = true ]; then
+              echo "::notice::${name}@${version} is already on npm; skipped"
+              continue
+            fi
+            npm publish "${RUNNER_TEMP}/packages/${name}-${version}.tgz" --tag "$tag"
           done

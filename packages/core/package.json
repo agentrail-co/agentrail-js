@@ -1,6 +1,6 @@
 {
   "name": "agentrail-core",
-  "version": "0.1.0-dev.1",
+  "version": "0.1.0",
   "description": "What every Agentrail component shares: the event the collector takes, markers, the keyed hash, W3C trace context, and the client that sends events.",
   "license": "Apache-2.0",
   "repository": {

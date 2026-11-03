@@ -34,6 +34,17 @@ export type SpanKind =
 export type PrincipalKind =
   'user' | 'agent_registration' | 'agent_instance' | 'oauth_client' | 'api_key';
 
+/**
+ * What became of a request's Web Bot Auth signature at the component that
+ * saw it; only `verified` says who sent the request.
+ */
+export type SignatureOutcome =
+  | 'verified'
+  | 'invalid'
+  | 'directory_unreachable'
+  | 'unsupported'
+  | 'unchecked';
+
 export type RegistrationPhase =
   'created' | 'claim_completed' | 'expired' | 'revoked';
 
@@ -88,12 +99,59 @@ export interface AgentrailEvent {
     /** The addresses on the site's own hosts a response named, as requested. */
     readonly linksOut: string[];
   } | null;
-  /** Self-reported or network facts: features, never proofs. */
+  /**
+   * Self-reported or network facts: features, never proofs, and what the
+   * collector's classifier of who the caller is reads. A component sends
+   * each of the later ones where it captured it; the collector fills null
+   * where a component sent nothing.
+   */
   readonly actor: {
     /** Keyed hash of the client address. */
     readonly egress: string | null;
     readonly userAgent: string | null;
+    /** MCP `clientInfo` name, or another client self-description. */
     readonly client: string | null;
+    /** The client software's own version: an MCP `clientInfo.version`. */
+    readonly clientVersion?: string | null | undefined;
+    /** The protocol version the client spoke. */
+    readonly protocol?: string | null | undefined;
+    /** The `Accept` the request sent. */
+    readonly accept?: string | null | undefined;
+    /** `Sec-Fetch-Site`, `-Mode` and `-Dest`, which a browser sends and a programmatic fetcher does not. */
+    readonly fetchMetadata?:
+      | {
+          readonly site: string;
+          readonly mode: string;
+          readonly dest: string;
+        }
+      | null
+      | undefined;
+    /** What the network said of the client, where the platform tells it: a feature, never a key. */
+    readonly network?:
+      | {
+          readonly asn: number | null;
+          readonly country: string | null;
+          readonly ja4: string | null;
+        }
+      | null
+      | undefined;
+    /** A Web Bot Auth signature: the agent URL it named, its key id, and what became of the check. */
+    readonly signature?:
+      | {
+          readonly agent: string;
+          readonly keyId: string | null;
+          readonly outcome: SignatureOutcome;
+        }
+      | null
+      | undefined;
+    /** A bot the platform verified against its own directory. */
+    readonly verifiedBot?:
+      | {
+          readonly category: string;
+          readonly name: string | null;
+        }
+      | null
+      | undefined;
   };
   /** A verified identity, its ids keyed hashes. */
   readonly principal: {

@@ -11,6 +11,7 @@ export {
   type Component,
   type PrincipalKind,
   type RegistrationPhase,
+  type SignatureOutcome,
   type SpanContext,
   type SpanKind,
   type Surface,
@@ -34,6 +35,16 @@ export {
 } from './session.js';
 export { hashKeyIdOf, keyedHash } from './hash.js';
 export { newId } from './id.js';
+export {
+  SIGNATURE_CHECK_OUTCOMES,
+  createSignatureVerifier,
+  keyThumbprint,
+  type SignatureCheckOutcome,
+  type SignatureVerifier,
+  type SignatureVerifierOptions,
+  type SignedAgent,
+  type SignedRequest,
+} from './web-bot-auth.js';
 export { VERSION } from './version.js';
 export {
   formatTraceparent,

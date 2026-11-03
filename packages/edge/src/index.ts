@@ -11,6 +11,7 @@ export {
   type Edge,
   type EdgeAdapter,
   type EdgeOptions,
+  type PlatformSignals,
   type Principal,
   type RequestHead,
 } from './edge.js';

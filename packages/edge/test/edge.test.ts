@@ -39,7 +39,10 @@ function edgeBefore(
   options: Pick<
     EdgeOptions,
     'identify' | 'sessionIdleTimeout' | 'sessionCookieDomain' | 'onError'
-  > = {},
+  > & {
+    /** What a signed agent's key directory answers; none answers 404. */
+    directory?: () => Response;
+  } = {},
   answer: (events: readonly AgentrailEvent[]) => Response = (sent) =>
     Response.json({ accepted: sent.length }),
 ) {
@@ -47,6 +50,7 @@ function edgeBefore(
   const components: unknown[] = [];
   const events: AgentrailEvent[] = [];
   const work: Promise<unknown>[] = [];
+  const { directory, ...edgeOptions } = options;
   const edge = createEdge({
     collector: {
       endpoint: 'https://collector.example.test',
@@ -55,12 +59,18 @@ function edgeBefore(
     hashKey: HASH_KEY,
     hosts: { [DOCS]: 'query', [APP]: 'path' },
     queryAllowlist: ['page'],
+    signers: ['signer.example.test'],
     onError: (error) => {
       throw error;
     },
-    ...options,
+    ...edgeOptions,
     fetch: (_input, init) => {
-      if (typeof init?.body !== 'string') throw new TypeError('no JSON body');
+      // A read with no body is the verifier's, for a signer's key directory.
+      if (init?.body === undefined)
+        return Promise.resolve(
+          directory?.() ?? new Response('', { status: 404 }),
+        );
+      if (typeof init.body !== 'string') throw new TypeError('no JSON body');
       const call: unknown = JSON.parse(init.body);
       checkIngestRequest(call);
       const checked = call as {
@@ -92,6 +102,56 @@ function edgeBefore(
     }
   }
   return { send, forwarded, components, events };
+}
+
+/** A signing agent, as Web Bot Auth has one: an Ed25519 key, published at its URL. */
+const AGENT = 'https://signer.example.test';
+const encoder = new TextEncoder();
+
+function base64(bytes: ArrayBuffer): string {
+  return btoa(String.fromCharCode(...new Uint8Array(bytes)));
+}
+
+async function signer() {
+  const pair = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, [
+    'sign',
+    'verify',
+  ]);
+  const jwk = await crypto.subtle.exportKey('jwk', pair.publicKey);
+  const thumbprint = base64(
+    await crypto.subtle.digest(
+      'SHA-256',
+      encoder.encode(JSON.stringify({ crv: 'Ed25519', kty: 'OKP', x: jwk.x })),
+    ),
+  )
+    .replaceAll('+', '-')
+    .replaceAll('/', '_')
+    .replace(/=+$/u, '');
+  return { pair, jwk, thumbprint };
+}
+
+/** The three headers of a request to `url` signed over its authority and the agent header, RFC 9421's base written out. */
+async function signedHeaders(
+  by: Awaited<ReturnType<typeof signer>>,
+  url: string,
+): Promise<Record<string, string>> {
+  const created = Math.floor(Date.now() / 1_000) - 5;
+  const params = `("@authority" "signature-agent";key="sig");created=${String(created)};expires=${String(created + 600)};keyid="${by.thumbprint}";tag="web-bot-auth"`;
+  const base = [
+    `"@authority": ${new URL(url).host}`,
+    `"signature-agent";key="sig": "${AGENT}"`,
+    `"@signature-params": ${params}`,
+  ].join('\n');
+  const signature = await crypto.subtle.sign(
+    'Ed25519',
+    by.pair.privateKey,
+    encoder.encode(base),
+  );
+  return {
+    'signature-agent': `sig="${AGENT}"`,
+    'signature-input': `sig=${params}`,
+    signature: `sig=:${base64(signature)}:`,
+  };
 }
 
 const MARKDOWN = [
@@ -550,5 +610,95 @@ describe('the platform adapters', () => {
         }),
       ),
     ).toBe('192.0.2.10');
+  });
+  // Fails if someone records a Web Bot Auth claim without checking it
+  // against the keys the agent publishes (a forged `Signature-Agent` would
+  // make any request a verified agent's, and the journey's actor), drops
+  // the Accept, the fetch metadata or the platform's word, or sends a value
+  // longer than the collector takes.
+  it('records what the caller and the platform said of it, with a signature checked against the agent’s keys', async () => {
+    const by = await signer();
+    const { send, events } = edgeBefore(() => new Response('ok'), {
+      directory: () =>
+        Response.json(
+          { keys: [by.jwk] },
+          { headers: { 'cache-control': 'max-age=3600' } },
+        ),
+    });
+    const url = `https://${DOCS}/guide.md`;
+    const signed = await signedHeaders(by, url);
+    await send(
+      new Request(url, {
+        headers: {
+          ...signed,
+          accept: 'text/markdown, */*',
+          'sec-fetch-site': 'none',
+          'sec-fetch-mode': 'navigate',
+          'sec-fetch-dest': 'document',
+        },
+      }),
+    );
+    expect(events[0]?.actor).toMatchObject({
+      accept: 'text/markdown, */*',
+      fetchMetadata: { site: 'none', mode: 'navigate', dest: 'document' },
+      network: null,
+      signature: { agent: AGENT, keyId: by.thumbprint, outcome: 'verified' },
+      verifiedBot: null,
+    });
+    // The same signature sent to another host does not check.
+    await send(new Request(`https://${APP}/guide.md`, { headers: signed }));
+    expect(events[1]?.actor.signature).toMatchObject({
+      agent: AGENT,
+      outcome: 'invalid',
+    });
+    // Nothing claimed (an empty header claims nothing either), and an
+    // Accept the collector would refuse whole.
+    await send(
+      new Request(url, {
+        headers: { accept: 'x'.repeat(300), 'signature-agent': '' },
+      }),
+    );
+    expect(events[2]?.actor).toMatchObject({
+      signature: null,
+      fetchMetadata: null,
+    });
+    expect(events[2]?.actor.accept).toHaveLength(256);
+
+    // What each platform says of the client.
+    const worker = cloudflare({ waitUntil: () => undefined });
+    const seen = Object.assign(new Request(url), {
+      cf: {
+        asn: 13335,
+        country: 'US',
+        botManagement: { ja4: 't13d1516h2_8daaf6152771_02713d6af862' },
+        verifiedBotCategory: 'AI Assistant',
+      },
+    });
+    expect(worker.signals?.(seen)).toEqual({
+      asn: 13335,
+      country: 'US',
+      ja4: 't13d1516h2_8daaf6152771_02713d6af862',
+      verifiedBot: { category: 'AI Assistant', name: null },
+    });
+    expect(worker.signals?.(new Request(url))).toEqual({
+      asn: null,
+      country: null,
+      ja4: null,
+      verifiedBot: null,
+    });
+    const middleware = vercel({
+      waitUntil: () => undefined,
+      origin: () => Promise.resolve(new Response('ok')),
+    });
+    expect(
+      middleware.signals?.(
+        new Request(url, {
+          headers: {
+            'x-vercel-ip-country': 'DE',
+            'x-vercel-ja4-digest': 't13d',
+          },
+        }),
+      ),
+    ).toEqual({ asn: null, country: 'DE', ja4: 't13d', verifiedBot: null });
   });
 });

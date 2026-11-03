@@ -88,9 +88,32 @@ rewrite an answer it passes on. Create the edge once, outside the handler.
   the one host. Give the browser script the same two values.
 - `sessionCookie`, `service`, `fetch`: the session cookie's name, the
   service the events name, and the fetch the collector's calls go through.
+- `signers`: registrable hosts, beside the known signers, whose Web Bot
+  Auth key directories the edge may read; a signature by any other host is
+  recorded as a claim it did not check, and that host is never contacted.
 - `onError(error)`: told of events that could not be sent, and of an
   `identify` that threw; they are logged otherwise. Neither ever reaches the
   visitor.
+
+## What it records of the caller
+
+Beside the user agent, each event carries what the caller and the network
+said of it, for the collector to read as features (never as proofs) when it
+asks who the caller is: the `Accept` sent, and the `Sec-Fetch-Site`, `-Mode`
+and `-Dest` a browser sends and a programmatic fetcher does not; what the
+platform says of the client, where it says anything (`cloudflare(ctx)` reads
+`request.cf`: the autonomous system and country on every plan, the JA4
+fingerprint and the verified-bot category where the zone has Bot Management;
+`vercel()` reads `x-vercel-ip-country` and `x-vercel-ja4-digest`, and BotID's
+verified bots stay in the app, where `checkBotId()` runs; an adapter of your
+own gives `signals(request)` or nothing); and a Web Bot Auth signature,
+checked against the keys the agent publishes. The check reads the agent's
+key directory from the edge, once per its `max-age`, from the known signers'
+hosts and those `signers` names and from no other, so a site's edge contacts
+only hosts it has been told of; a directory that cannot be read leaves the
+signature `directory_unreachable`, never `invalid`.
+Nothing here is hashed, since nothing identifies a person: a fingerprint is
+shared by every copy of one client.
 
 ## Licence
 

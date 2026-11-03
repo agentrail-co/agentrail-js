@@ -294,8 +294,8 @@ const ADDRESS_OR_PRIVATE_HOST =
  */
 function isAgentUrl(value: string, signers: ReadonlySet<string>): boolean {
   const url = URL.parse(value);
+  if (url === null) return false;
   if (
-    url === null ||
     url.protocol !== 'https:' ||
     url.port !== '' ||
     url.username !== '' ||

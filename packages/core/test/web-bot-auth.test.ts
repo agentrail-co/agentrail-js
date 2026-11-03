@@ -226,6 +226,7 @@ describe('Web Bot Auth', () => {
     let aborted = 0;
     const slow = createSignatureVerifier({
       now: () => clock,
+      signers: ['signer.example.test'],
       fetch: (_input, init) =>
         new Promise((_resolve, reject) => {
           init?.signal?.addEventListener('abort', () => {
@@ -293,7 +294,7 @@ describe('Web Bot Auth', () => {
     });
     expect(reads).toEqual([]);
 
-    const long = `https://${'a'.repeat(300)}.example.test`;
+    const long = `https://${'a'.repeat(300)}.signer.example.test`;
     const claimed = await verify(
       await signedRequest(by, {
         agentHeader: `sig="${long}"`,

@@ -200,9 +200,20 @@ function verifyParameters(
   }
 }
 
-/** The agent URLs a `Signature-Agent` header names, by dictionary label; the bare form has none. */
-function agentsOf(header: string): Map<string | null, string> {
-  const agents = new Map<string | null, string>();
+/** An agent URL a header names, and whether this verifier will read a directory from it. */
+interface NamedAgent {
+  readonly url: string;
+  readonly readable: boolean;
+}
+
+/**
+ * The agent URLs a `Signature-Agent` header names, by dictionary label (the
+ * bare form has none): every HTTPS URL it names, each marked whether its
+ * directory may be read, so a claim is always recorded against the agent
+ * the signature named, readable or not.
+ */
+function agentsOf(header: string): Map<string | null, NamedAgent> {
+  const agents = new Map<string | null, NamedAgent>();
   let members: Map<string, Member>;
   try {
     members = parseDictionary(header);
@@ -219,19 +230,31 @@ function agentsOf(header: string): Map<string | null, string> {
       !(type.kind === 'token' && type.value === 'directory')
     )
       continue;
-    if (isAgentUrl(member.value.value)) agents.set(label, member.value.value);
+    if (isHttpsUrl(member.value.value))
+      agents.set(label, {
+        url: member.value.value,
+        readable: isAgentUrl(member.value.value),
+      });
   }
   if (agents.size === 0) {
     // The bare string signers sent before the dictionary form.
     try {
       const item = parseItem(header);
-      if (item.value.kind === 'string' && isAgentUrl(item.value.value))
-        agents.set(null, item.value.value);
+      if (item.value.kind === 'string' && isHttpsUrl(item.value.value))
+        agents.set(null, {
+          url: item.value.value,
+          readable: isAgentUrl(item.value.value),
+        });
     } catch (error) {
       if (!(error instanceof StructuredFieldError)) throw error;
     }
   }
   return agents;
+}
+
+function isHttpsUrl(value: string): boolean {
+  const url = URL.parse(value);
+  return url !== null && url.protocol === 'https:';
 }
 
 /** A hostname that is an address rather than a name, or a name that is never public. */
@@ -532,7 +555,7 @@ export function createSignatureVerifier(
     if (agentHeader === null) return null;
     const agents = agentsOf(agentHeader);
     const first = agents.values().next();
-    const named = first.done ? agentHeader.trim() : first.value;
+    const named = first.done ? agentHeader.trim() : first.value.url;
     // An empty header names no one: no claim was made.
     if (named === '') return null;
     // Cut to what the collector takes, so a claim never refuses the call
@@ -546,11 +569,8 @@ export function createSignatureVerifier(
       keyId: keyId?.slice(0, KEY_ID_LENGTH) ?? null,
       outcome,
     });
-    // A header that names an HTTPS URL this verifier will not read a
-    // directory from (an address, a private name, a port) is a claim it
-    // cannot check, never one it found false; anything else is no URL.
-    if (first.done)
-      return claim(/https:\/\//iu.test(named) ? 'unsupported' : 'invalid');
+    // A header naming no HTTPS URL at all is a claim of nothing checkable.
+    if (first.done) return claim('invalid');
 
     const inputHeader = request.headers.get('signature-input');
     const signatureHeader = request.headers.get('signature');
@@ -592,13 +612,18 @@ export function createSignatureVerifier(
     if (agentComponent === undefined || !coversTarget)
       return claim('invalid', keyId);
     const memberKey = agentComponent.parameters.get('key');
-    const agent =
+    const signedAgent =
       memberKey === undefined
-        ? named
+        ? first.value
         : memberKey.kind === 'string'
           ? agents.get(memberKey.value)
           : undefined;
-    if (agent === undefined) return claim('invalid', keyId);
+    if (signedAgent === undefined) return claim('invalid', keyId);
+    const agent = signedAgent.url;
+    // A URL this verifier will not read a directory from (an address, a
+    // private name, a port, credentials) is a claim it cannot check, never
+    // one it found false, and never one it checks against another member.
+    if (!signedAgent.readable) return claim('unsupported', keyId, agent);
 
     const moment = now();
     if (parameters.created * 1_000 > moment + CREATED_SKEW_MS)

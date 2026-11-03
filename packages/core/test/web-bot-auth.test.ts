@@ -265,10 +265,19 @@ describe('Web Bot Auth', () => {
         agentHeader: `sig="${agent}"`,
       });
       expect(await verify(request), agent).toMatchObject({
-        agent: `sig="${agent}"`,
+        agent,
         outcome: 'unsupported',
       });
     }
+    // A blocked member beside a public one: the claim stays with the
+    // member the signature named, unchecked, and nothing is read.
+    const mixed = await signedRequest(by, {
+      agentHeader: `sig="https://signer.example.test:8443", other="${AGENT}"`,
+    });
+    expect(await verify(mixed)).toMatchObject({
+      agent: 'https://signer.example.test:8443',
+      outcome: 'unsupported',
+    });
     expect(reads).toEqual([]);
 
     const long = `https://${'a'.repeat(300)}.example.test`;

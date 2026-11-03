@@ -129,7 +129,15 @@ function readBytes(reader: Reader): Uint8Array<ArrayBuffer> {
   reader.expect(':');
   if (!BASE64.test(encoded))
     throw new StructuredFieldError('A byte sequence is base64.');
-  const binary = atob(encoded);
+  let binary: string;
+  try {
+    binary = atob(encoded);
+  } catch (error) {
+    // Base64 of a length no bytes have: a field that does not parse.
+    if (error instanceof DOMException)
+      throw new StructuredFieldError('A byte sequence is whole base64.');
+    throw error;
+  }
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
@@ -245,7 +253,10 @@ export function serializeBareItem(item: BareItem): string {
     case 'integer':
       return String(item.value);
     case 'decimal':
-      return String(item.value);
+      // A decimal keeps a fractional digit, as the RFC writes `1.0`.
+      return Number.isInteger(item.value)
+        ? item.value.toFixed(1)
+        : String(item.value);
     case 'boolean':
       return item.value ? '?1' : '?0';
     case 'bytes':

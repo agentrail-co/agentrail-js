@@ -82,8 +82,12 @@ const DIRECTORY_RETRY_MS = 60 * 1_000;
 const CREATED_SKEW_MS = 5 * 60 * 1_000;
 /** The tag the draft gives these signatures. */
 const TAG = 'web-bot-auth';
-/** The longest `Signature-Agent` kept as an agent's name when it does not parse. */
-const RAW_AGENT_LENGTH = 256;
+/** The longest agent URL and key id the collector takes; a claim is cut to them. */
+const AGENT_LENGTH = 256;
+const KEY_ID_LENGTH = 256;
+/** The most directories kept at once, and the most failures remembered: a caller names the hosts, so neither may grow without bound. */
+const MAX_DIRECTORIES = 256;
+const MAX_FAILURES = 1_024;
 
 interface Jwk {
   readonly kty: string;
@@ -215,13 +219,13 @@ function agentsOf(header: string): Map<string | null, string> {
       !(type.kind === 'token' && type.value === 'directory')
     )
       continue;
-    if (isHttpsUrl(member.value.value)) agents.set(label, member.value.value);
+    if (isAgentUrl(member.value.value)) agents.set(label, member.value.value);
   }
   if (agents.size === 0) {
     // The bare string signers sent before the dictionary form.
     try {
       const item = parseItem(header);
-      if (item.value.kind === 'string' && isHttpsUrl(item.value.value))
+      if (item.value.kind === 'string' && isAgentUrl(item.value.value))
         agents.set(null, item.value.value);
     } catch (error) {
       if (!(error instanceof StructuredFieldError)) throw error;
@@ -230,9 +234,27 @@ function agentsOf(header: string): Map<string | null, string> {
   return agents;
 }
 
-function isHttpsUrl(value: string): boolean {
+/** A hostname that is an address rather than a name, or a name that is never public. */
+const ADDRESS_OR_PRIVATE_HOST =
+  /^(?:\d{1,3}(?:\.\d{1,3}){3}|\[.*\]|localhost|.*\.(?:localhost|local|internal|arpa))$/iu;
+
+/**
+ * A URL this verifier will read a directory from: HTTPS, on its default
+ * port, with no credentials, at a public name. The caller chooses the
+ * URL, so an address, a private name or an odd port is never contacted
+ * from the edge that runs this.
+ */
+function isAgentUrl(value: string): boolean {
   const url = URL.parse(value);
-  return url !== null && url.protocol === 'https:';
+  return (
+    url !== null &&
+    url.protocol === 'https:' &&
+    url.port === '' &&
+    url.username === '' &&
+    url.password === '' &&
+    url.hostname.includes('.') &&
+    !ADDRESS_OR_PRIVATE_HOST.test(url.hostname)
+  );
 }
 
 interface SignatureParameters {
@@ -285,7 +307,8 @@ function componentValue(
     if (parameters.size > 0) return { kind: 'unsupported' };
     switch (name) {
       case '@method':
-        return { kind: 'value', value: request.method.toUpperCase() };
+        // As sent: a method's name is case-sensitive.
+        return { kind: 'value', value: request.method };
       case '@target-uri':
         return { kind: 'value', value: url.href };
       case '@authority':
@@ -399,42 +422,64 @@ class Directories {
         : { kind: 'read', directory: kept.directory };
     const underWay = this.reading.get(address);
     if (underWay !== undefined) return underWay;
-    const reading = this.fetchDirectory(address).then((read) => {
-      this.reading.delete(address);
-      if (read.kind === 'read') this.failedAt.delete(address);
-      else {
-        this.failedAt.set(address, this.now());
-        if (kept !== undefined)
-          return { kind: 'read' as const, directory: kept.directory };
+    const reading = (async () => {
+      try {
+        const read = await this.fetchDirectory(address);
+        if (read.kind === 'read') this.failedAt.delete(address);
+        else {
+          this.remember(this.failedAt, address, this.now(), MAX_FAILURES);
+          if (kept !== undefined)
+            return { kind: 'read' as const, directory: kept.directory };
+        }
+        return read;
+      } finally {
+        // Whatever became of it, the next check reads again.
+        this.reading.delete(address);
       }
-      return read;
-    });
+    })();
     this.reading.set(address, reading);
     return reading;
   }
 
+  /** Keeps a value, and forgets the oldest once more than `most` are kept. */
+  private remember<Value>(
+    kept: Map<string, Value>,
+    address: string,
+    value: Value,
+    most: number,
+  ): void {
+    kept.delete(address);
+    kept.set(address, value);
+    for (const oldest of kept.keys()) {
+      if (kept.size <= most) break;
+      kept.delete(oldest);
+    }
+  }
+
   private async fetchDirectory(address: string): Promise<DirectoryRead> {
-    let response: Response;
+    let body: unknown;
+    let cacheControl: string | null;
     try {
-      response = await this.fetcher(address, {
+      const response = await this.fetcher(address, {
         headers: { accept: DIRECTORY_MEDIA_TYPE },
         // The draft forbids following a redirect to a directory.
         redirect: 'manual',
         signal: AbortSignal.timeout(DIRECTORY_TIMEOUT_MS),
       });
-    } catch {
-      // The network, TLS or the deadline: the directory is unreachable,
-      // which is what the caller is told; the reason is not evidence either.
-      return { kind: 'unreachable' };
-    }
-    if (response.status !== 200) return { kind: 'unreachable' };
-    let body: unknown;
-    try {
+      if (response.status !== 200) return { kind: 'unreachable' };
+      cacheControl = response.headers.get('cache-control');
       body = await response.json();
     } catch (error) {
-      if (!(error instanceof SyntaxError) && !(error instanceof TypeError))
-        throw error;
-      return { kind: 'unreachable' };
+      // The network, TLS, the deadline (on the headers or the body) or a
+      // body that is not JSON: the directory is unreachable, which is what
+      // the caller is told; the reason is not evidence either.
+      if (
+        error instanceof DOMException ||
+        error instanceof TypeError ||
+        error instanceof SyntaxError
+      )
+        return { kind: 'unreachable' };
+      throw error;
     }
     if (
       typeof body !== 'object' ||
@@ -444,12 +489,17 @@ class Directories {
     )
       return { kind: 'unreachable' };
     const directory: Directory = { keys: body.keys.filter(isJwk) };
-    const maxAge = maxAgeOf(response.headers.get('cache-control'));
+    const maxAge = maxAgeOf(cacheControl);
     const ttl =
       maxAge === null
         ? DIRECTORY_DEFAULT_TTL_MS
         : Math.min(maxAge * 1_000, DIRECTORY_MAX_TTL_MS);
-    this.held.set(address, { directory, until: this.now() + ttl });
+    this.remember(
+      this.held,
+      address,
+      { directory, until: this.now() + ttl },
+      MAX_DIRECTORIES,
+    );
     return { kind: 'read', directory };
   }
 }
@@ -482,15 +532,25 @@ export function createSignatureVerifier(
     if (agentHeader === null) return null;
     const agents = agentsOf(agentHeader);
     const first = agents.values().next();
-    const named = first.done
-      ? agentHeader.trim().slice(0, RAW_AGENT_LENGTH)
-      : first.value;
+    const named = first.done ? agentHeader.trim() : first.value;
+    // An empty header names no one: no claim was made.
+    if (named === '') return null;
+    // Cut to what the collector takes, so a claim never refuses the call
+    // that carries it; the check itself read the values whole.
     const claim = (
       outcome: SignatureCheckOutcome,
       keyId: string | null = null,
       agent = named,
-    ): SignedAgent => ({ agent, keyId, outcome });
-    if (first.done) return claim('invalid');
+    ): SignedAgent => ({
+      agent: agent.slice(0, AGENT_LENGTH),
+      keyId: keyId?.slice(0, KEY_ID_LENGTH) ?? null,
+      outcome,
+    });
+    // A header that names an HTTPS URL this verifier will not read a
+    // directory from (an address, a private name, a port) is a claim it
+    // cannot check, never one it found false; anything else is no URL.
+    if (first.done)
+      return claim(/https:\/\//iu.test(named) ? 'unsupported' : 'invalid');
 
     const inputHeader = request.headers.get('signature-input');
     const signatureHeader = request.headers.get('signature');

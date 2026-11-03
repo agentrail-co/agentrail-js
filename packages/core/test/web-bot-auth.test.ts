@@ -180,15 +180,21 @@ describe('Web Bot Auth', () => {
 
   // Fails if someone reads a directory that is down as a forged signature
   // (every request of a signer whose directory is down would be reported
-  // as invalid, and a journey attributed to a forger), or asks a down
-  // directory again on every request.
+  // as invalid, and a journey attributed to a forger), asks a down
+  // directory again on every request, drops the copy it holds when a
+  // refresh fails, never tries again after a failure, or lets a read whose
+  // body stalled past the deadline stay under way for every later check.
   it('tells a directory it could not read from a signature that does not check', async () => {
     const by = await signer();
     let down = true;
-    const { verify, reads } = verifier(() =>
-      down ? new Response('', { status: 503 }) : directoryOf(by.jwk),
-    );
-    const request = await signedRequest(by);
+    let clock = NOW;
+    const answer = () =>
+      down ? new Response('', { status: 503 }) : directoryOf(by.jwk);
+    const { verify, reads } = verifier(answer, () => clock);
+    const request = await signedRequest(by, {
+      created: Math.floor(NOW / 1_000) - 10,
+      expires: Math.floor(NOW / 1_000) + 8 * 3_600,
+    });
     expect(await verify(request)).toMatchObject({
       outcome: 'directory_unreachable',
     });
@@ -197,16 +203,97 @@ describe('Web Bot Auth', () => {
     });
     expect(reads).toHaveLength(1);
 
-    // Read once it answers, and kept through a later outage.
+    // Tried again after a minute; read once it answers.
+    clock += 61_000;
     down = false;
-    const later = verifier(
-      () => (down ? new Response('', { status: 503 }) : directoryOf(by.jwk)),
-      () => NOW,
-    );
-    expect(await later.verify(request)).toMatchObject({ outcome: 'verified' });
+    expect(await verify(request)).toMatchObject({ outcome: 'verified' });
+    expect(reads).toHaveLength(2);
+    // Past its max-age the refresh fails: the copy held still answers, and
+    // the failure is not retried for a minute.
+    clock += 3_600_000 + 1;
     down = true;
-    expect(await later.verify(request)).toMatchObject({ outcome: 'verified' });
-    expect(later.reads).toHaveLength(1);
+    expect(await verify(request)).toMatchObject({ outcome: 'verified' });
+    expect(await verify(request)).toMatchObject({ outcome: 'verified' });
+    expect(reads).toHaveLength(3);
+    clock += 61_000;
+    down = false;
+    expect(await verify(request)).toMatchObject({ outcome: 'verified' });
+    expect(reads).toHaveLength(4);
+
+    // A read the deadline ends: unreachable, and the next check reads anew
+    // rather than waiting on it.
+    let aborted = 0;
+    const slow = createSignatureVerifier({
+      now: () => clock,
+      fetch: (_input, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            aborted += 1;
+            reject(
+              new DOMException('The operation was aborted.', 'AbortError'),
+            );
+          });
+        }),
+    });
+    expect(await slow(request)).toMatchObject({
+      outcome: 'directory_unreachable',
+    });
+    clock += 61_000;
+    expect(await slow(request)).toMatchObject({
+      outcome: 'directory_unreachable',
+    });
+    expect(aborted).toBe(2);
+  }, 20_000);
+
+  // Fails if someone lets the edge read a directory from a host the caller
+  // chose inside the network it runs in (an address, a private name, a
+  // port), records a claim longer than the collector takes (the whole call
+  // carrying it would be refused), or lets a byte sequence that is not
+  // whole base64 throw past the verifier (the request would go unrecorded).
+  it('reads directories from public names only, bounds what it records, and reads broken bytes as no signature', async () => {
+    const by = await signer();
+    const { verify, reads } = verifier(() => directoryOf(by.jwk));
+    for (const agent of [
+      'https://10.0.0.5',
+      'https://localhost',
+      'https://metadata.internal',
+      'https://signer.example.test:8443',
+      'https://user:pw@signer.example.test',
+      'https://[fd00::1]',
+    ]) {
+      const request = await signedRequest(by, {
+        agentHeader: `sig="${agent}"`,
+      });
+      expect(await verify(request), agent).toMatchObject({
+        agent: `sig="${agent}"`,
+        outcome: 'unsupported',
+      });
+    }
+    expect(reads).toEqual([]);
+
+    const long = `https://${'a'.repeat(300)}.example.test`;
+    const claimed = await verify(
+      await signedRequest(by, {
+        agentHeader: `sig="${long}"`,
+        keyId: 'k'.repeat(300),
+      }),
+    );
+    // A public name, so it is read, and the key is not there: invalid, and
+    // recorded no longer than the collector takes.
+    expect(claimed).toMatchObject({ outcome: 'invalid' });
+    expect(claimed?.agent).toHaveLength(256);
+    expect(claimed?.keyId).toHaveLength(256);
+    expect(
+      await verify({
+        method: 'GET',
+        url: 'https://docs.example.test/',
+        headers: new Headers({ 'signature-agent': '   ' }),
+      }),
+    ).toBeNull();
+
+    const broken = await signedRequest(by);
+    broken.headers.set('signature', 'sig=:a:');
+    expect(await verify(broken)).toMatchObject({ outcome: 'invalid' });
   });
 
   // Fails if someone guesses the value of a component this verifier does
@@ -228,5 +315,22 @@ describe('Web Bot Auth', () => {
     expect(await verify(request)).toMatchObject({ outcome: 'unsupported' });
     expect(await keyThumbprint(by.jwk as { kty: string })).toBe(by.thumbprint);
     expect(await keyThumbprint({ kty: 'oct' })).toBeNull();
+
+    // What it does derive, it derives as sent: a method's case, and a
+    // decimal member of a covered header written with its fraction.
+    const custom = await signedRequest(by, {
+      components:
+        '("@method" "@authority" "x-rate";key="limit" "signature-agent";key="sig")',
+      componentLines: (url) => [
+        '"@method": custom',
+        `"@authority": ${url.host}`,
+        '"x-rate";key="limit": 1.0',
+        `"signature-agent";key="sig": "${AGENT}"`,
+      ],
+    });
+    custom.headers.set('x-rate', 'limit=1.0');
+    expect(await verify({ ...custom, method: 'custom' })).toMatchObject({
+      outcome: 'verified',
+    });
   });
 });

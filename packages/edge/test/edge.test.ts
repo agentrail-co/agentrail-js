@@ -650,8 +650,13 @@ describe('the platform adapters', () => {
       agent: AGENT,
       outcome: 'invalid',
     });
-    // Nothing claimed, and an Accept the collector would refuse whole.
-    await send(new Request(url, { headers: { accept: 'x'.repeat(300) } }));
+    // Nothing claimed (an empty header claims nothing either), and an
+    // Accept the collector would refuse whole.
+    await send(
+      new Request(url, {
+        headers: { accept: 'x'.repeat(300), 'signature-agent': '' },
+      }),
+    );
     expect(events[2]?.actor).toMatchObject({
       signature: null,
       fetchMetadata: null,

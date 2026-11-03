@@ -59,6 +59,7 @@ function edgeBefore(
     hashKey: HASH_KEY,
     hosts: { [DOCS]: 'query', [APP]: 'path' },
     queryAllowlist: ['page'],
+    signers: ['signer.example.test'],
     onError: (error) => {
       throw error;
     },

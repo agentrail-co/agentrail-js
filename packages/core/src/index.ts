@@ -36,6 +36,7 @@ export {
 export { hashKeyIdOf, keyedHash } from './hash.js';
 export { newId } from './id.js';
 export {
+  KNOWN_SIGNERS,
   SIGNATURE_CHECK_OUTCOMES,
   createSignatureVerifier,
   keyThumbprint,

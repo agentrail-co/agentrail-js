@@ -120,6 +120,12 @@ export interface EdgeOptions {
    * Logs by default.
    */
   readonly onError?: (error: Error) => void;
+  /**
+   * Registrable hosts, beside the known signers, whose Web Bot Auth key
+   * directories this edge may read; a signature by any other host is
+   * recorded as an unsupported claim, and that host is never contacted.
+   */
+  readonly signers?: readonly string[];
   /** The fetch the collector's calls go through; the platform's own by default. */
   readonly fetch?: typeof fetch;
 }
@@ -294,9 +300,10 @@ export function createEdge(options: EdgeOptions): Edge {
 
   // Checks each signed request against the keys its agent publishes; the
   // directories are read once per `max-age` for the life of the edge.
-  const verify: SignatureVerifier = createSignatureVerifier(
-    options.fetch ? { fetch: options.fetch } : {},
-  );
+  const verify: SignatureVerifier = createSignatureVerifier({
+    ...(options.fetch ? { fetch: options.fetch } : {}),
+    ...(options.signers ? { signers: options.signers } : {}),
+  });
 
   /** A path as it is recorded: the allowlisted query only. */
   function recordedPath(url: URL): { path: string; dropped: boolean } {

@@ -56,9 +56,31 @@ export interface SignedRequest {
   readonly headers: Headers;
 }
 
+/**
+ * The operators known to publish keys for their agents, by the registrable
+ * host of the directory: the only hosts a directory is read from unless a
+ * site names more. A name the caller chose is otherwise never contacted,
+ * since even a public-looking name may resolve to an address inside the
+ * network the edge runs in, which the Fetch API gives no way to see.
+ */
+export const KNOWN_SIGNERS = [
+  'chatgpt.com',
+  'openai.com',
+  'google.com',
+  'anthropic.com',
+  'claude.ai',
+  'perplexity.ai',
+] as const;
+
 export interface SignatureVerifierOptions {
   /** The fetch directories are read with; the platform's own by default. */
   readonly fetch?: typeof fetch;
+  /**
+   * Registrable hosts, beside the known signers, whose key directories may
+   * be read (`signer.example.com` covers `keys.signer.example.com`). A
+   * signature by any other host is recorded as an unsupported claim.
+   */
+  readonly signers?: readonly string[];
   /** The clock, milliseconds since the epoch; `Date.now` by default. */
   readonly now?: () => number;
 }
@@ -212,7 +234,10 @@ interface NamedAgent {
  * directory may be read, so a claim is always recorded against the agent
  * the signature named, readable or not.
  */
-function agentsOf(header: string): Map<string | null, NamedAgent> {
+function agentsOf(
+  header: string,
+  readable: (url: string) => boolean,
+): Map<string | null, NamedAgent> {
   const agents = new Map<string | null, NamedAgent>();
   let members: Map<string, Member>;
   try {
@@ -233,7 +258,7 @@ function agentsOf(header: string): Map<string | null, NamedAgent> {
     if (isHttpsUrl(member.value.value))
       agents.set(label, {
         url: member.value.value,
-        readable: isAgentUrl(member.value.value),
+        readable: readable(member.value.value),
       });
   }
   if (agents.size === 0) {
@@ -243,7 +268,7 @@ function agentsOf(header: string): Map<string | null, NamedAgent> {
       if (item.value.kind === 'string' && isHttpsUrl(item.value.value))
         agents.set(null, {
           url: item.value.value,
-          readable: isAgentUrl(item.value.value),
+          readable: readable(item.value.value),
         });
     } catch (error) {
       if (!(error instanceof StructuredFieldError)) throw error;
@@ -263,21 +288,26 @@ const ADDRESS_OR_PRIVATE_HOST =
 
 /**
  * A URL this verifier will read a directory from: HTTPS, on its default
- * port, with no credentials, at a public name. The caller chooses the
- * URL, so an address, a private name or an odd port is never contacted
+ * port, with no credentials, at a public name that is a listed signer's or
+ * under one. The caller chooses the URL, so nothing else is ever contacted
  * from the edge that runs this.
  */
-function isAgentUrl(value: string): boolean {
+function isAgentUrl(value: string, signers: ReadonlySet<string>): boolean {
   const url = URL.parse(value);
-  return (
-    url !== null &&
-    url.protocol === 'https:' &&
-    url.port === '' &&
-    url.username === '' &&
-    url.password === '' &&
-    url.hostname.includes('.') &&
-    !ADDRESS_OR_PRIVATE_HOST.test(url.hostname)
-  );
+  if (
+    url === null ||
+    url.protocol !== 'https:' ||
+    url.port !== '' ||
+    url.username !== '' ||
+    url.password !== '' ||
+    !url.hostname.includes('.') ||
+    ADDRESS_OR_PRIVATE_HOST.test(url.hostname)
+  )
+    return false;
+  const host = url.hostname.toLowerCase();
+  for (const signer of signers)
+    if (host === signer || host.endsWith(`.${signer}`)) return true;
+  return false;
 }
 
 interface SignatureParameters {
@@ -549,11 +579,17 @@ export function createSignatureVerifier(
 ): SignatureVerifier {
   const now = options.now ?? Date.now;
   const directories = new Directories(options.fetch ?? fetch, now);
+  const signers = new Set(
+    [...KNOWN_SIGNERS, ...(options.signers ?? [])].map((host) =>
+      host.toLowerCase(),
+    ),
+  );
+  const readable = (url: string) => isAgentUrl(url, signers);
 
   return async (request) => {
     const agentHeader = request.headers.get('signature-agent');
     if (agentHeader === null) return null;
-    const agents = agentsOf(agentHeader);
+    const agents = agentsOf(agentHeader, readable);
     const first = agents.values().next();
     const named = first.done ? agentHeader.trim() : first.value.url;
     // An empty header names no one: no claim was made.

@@ -98,6 +98,7 @@ function verifier(
   const reads: string[] = [];
   const verify = createSignatureVerifier({
     now,
+    signers: ['signer.example.test'],
     fetch: (input, init) => {
       if (!(input instanceof URL) && typeof input !== 'string')
         throw new TypeError('the verifier fetches by address');
@@ -246,8 +247,9 @@ describe('Web Bot Auth', () => {
   }, 20_000);
 
   // Fails if someone lets the edge read a directory from a host the caller
-  // chose inside the network it runs in (an address, a private name, a
-  // port), records a claim longer than the collector takes (the whole call
+  // chose (an address, a private name, a port, or any name no one listed,
+  // which may resolve inside the network the edge runs in), records a
+  // claim longer than the collector takes (the whole call
   // carrying it would be refused), or lets a byte sequence that is not
   // whole base64 throw past the verifier (the request would go unrecorded).
   it('reads directories from public names only, bounds what it records, and reads broken bytes as no signature', async () => {
@@ -269,6 +271,17 @@ describe('Web Bot Auth', () => {
         outcome: 'unsupported',
       });
     }
+    // A public name no one listed: never contacted either.
+    expect(
+      await verify(
+        await signedRequest(by, {
+          agentHeader: 'sig="https://unlisted.example.test"',
+        }),
+      ),
+    ).toMatchObject({
+      agent: 'https://unlisted.example.test',
+      outcome: 'unsupported',
+    });
     // A blocked member beside a public one: the claim stays with the
     // member the signature named, unchecked, and nothing is read.
     const mixed = await signedRequest(by, {

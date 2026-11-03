@@ -88,6 +88,9 @@ rewrite an answer it passes on. Create the edge once, outside the handler.
   the one host. Give the browser script the same two values.
 - `sessionCookie`, `service`, `fetch`: the session cookie's name, the
   service the events name, and the fetch the collector's calls go through.
+- `signers`: registrable hosts, beside the known signers, whose Web Bot
+  Auth key directories the edge may read; a signature by any other host is
+  recorded as a claim it did not check, and that host is never contacted.
 - `onError(error)`: told of events that could not be sent, and of an
   `identify` that threw; they are logged otherwise. Neither ever reaches the
   visitor.
@@ -105,9 +108,10 @@ fingerprint and the verified-bot category where the zone has Bot Management;
 verified bots stay in the app, where `checkBotId()` runs; an adapter of your
 own gives `signals(request)` or nothing); and a Web Bot Auth signature,
 checked against the keys the agent publishes. The check reads the agent's
-key directory from the edge, once per its `max-age`, so a site's edge
-contacts the host of each agent that signs its requests; a directory that
-cannot be read leaves the signature `directory_unreachable`, never `invalid`.
+key directory from the edge, once per its `max-age`, from the known signers'
+hosts and those `signers` names and from no other, so a site's edge contacts
+only hosts it has been told of; a directory that cannot be read leaves the
+signature `directory_unreachable`, never `invalid`.
 Nothing here is hashed, since nothing identifies a person: a fingerprint is
 shared by every copy of one client.
 

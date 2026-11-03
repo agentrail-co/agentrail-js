@@ -15,7 +15,8 @@ tells `onError` of every call given up. And the Web Bot Auth check
 (`createSignatureVerifier`): a request's `Signature-Agent`,
 `Signature-Input` and `Signature` checked against the keys the named agent
 publishes at its `/.well-known/http-message-signatures-directory`, read once
-per `max-age`; Ed25519, RSA-PSS-SHA512 and ECDSA-P256; the outcome is
+per `max-age` and only from the known signers' hosts (`KNOWN_SIGNERS`) and
+the ones a site names, since a caller chooses the URL; Ed25519, RSA-PSS-SHA512 and ECDSA-P256; the outcome is
 `verified`, `invalid` (a forged or stale signature, or a key the directory
 does not hold), `directory_unreachable` or `unsupported`, so a directory that
 is down is never read as a forgery and a signature it does not read is never

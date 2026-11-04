@@ -3,8 +3,8 @@
 The Agentrail edge, in front of a site on the Fetch API: Cloudflare Workers,
 Vercel Routing Middleware, or anything else that speaks it. Each request is
 answered through the site's origin and recorded as one event, sent to the
-Agentrail collector after the answer through the platform's `waitUntil`, so
-recording never slows a request.
+Agentrail collector after the answer through the platform's `waitUntil`. A local
+HMAC operation signs the origin trace handoff before forwarding the request.
 
 In an answer meant for agents (Markdown, `llms.txt`), every link to the
 site's own hosts is marked, so the request an agent makes by following one
@@ -69,6 +69,23 @@ export default {
 In Routing Middleware, `vercel({ waitUntil, origin })` takes `waitUntil`
 from `@vercel/functions` and fetches the site itself, since middleware cannot
 rewrite an answer it passes on. Create the edge once, outside the handler.
+
+## Backend trace handoff
+
+Each forwarded request carries a new `traceparent` and an
+`x-agentrail-trace-handoff` token authenticated with the workspace hash key.
+The token binds the trace parent, key ID, issue time, HTTP method and final
+origin path/query. The backend accepts it for 60 seconds. The caller's handoff,
+tracestate and baggage are removed; the handoff response header is removed
+before answering the visitor. A signing failure reaches `onError` as
+`TraceHandoffSigningError` and the application request continues unsigned.
+
+Apply path/query rewrites in `EdgeAdapter.prepareOriginRequest(request)`, or
+`vercel({ waitUntil, prepareOriginRequest, origin })`. Signing happens after
+that hook. The `origin` callback sends the prepared request; host-only changes
+preserve the signature. A path/query change inside `origin` prevents backend
+verification. `agentrail-node` starts a new trace for unsigned or refused
+handoffs and keeps the caller's context as a directional span link.
 
 ## Options
 

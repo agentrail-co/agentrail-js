@@ -1,0 +1,1 @@
+Independent test decoder definitions from open-telemetry/opentelemetry-proto v1.9.0, generated with protobufjs. These public Apache-2.0 protocol definitions contain no Agentrail engine code. See LICENSE.opentelemetry and https://github.com/open-telemetry/opentelemetry-proto/tree/v1.9.0.

@@ -1,5 +1,8 @@
 import {
   createCollector,
+  TRACE_HANDOFF_HEADER,
+  signTraceHandoff,
+  traceHandoffTarget,
   createSignatureVerifier,
   formatTraceparent,
   hashKeyIdOf,
@@ -85,6 +88,10 @@ export interface Principal {
   readonly actingUserId?: string | null;
 }
 
+export class TraceHandoffSigningError extends Error {
+  override readonly name = 'TraceHandoffSigningError';
+}
+
 export interface EdgeOptions {
   /** Where events go, and the edge source's secret. */
   readonly collector: { readonly endpoint: string; readonly secret: string };
@@ -158,6 +165,8 @@ export interface EdgeAdapter {
   waitUntil(work: Promise<unknown>): void;
   /** Sends the request on to the site. */
   origin(request: Request): Promise<Response>;
+  /** Apply path/query rewrites here, before the final request is signed. */
+  prepareOriginRequest?(request: Request): Request | Promise<Request>;
   /** This edge instance, when the platform names one. */
   readonly instance: string | null;
 }
@@ -283,7 +292,8 @@ export function createEdge(options: EdgeOptions): Edge {
   // Every call names the key its events were hashed with. Its id is a
   // digest, which WebCrypto only gives asynchronously, so the collector is
   // ready from the first send on, never on a request's path.
-  const collector: Promise<Collector> = hashKeyIdOf(hashKey).then((hashKeyId) =>
+  const keyId = hashKeyIdOf(hashKey);
+  const collector: Promise<Collector> = keyId.then((hashKeyId) =>
     createCollector({
       endpoint: options.collector.endpoint,
       secret: options.collector.secret,
@@ -304,6 +314,48 @@ export function createEdge(options: EdgeOptions): Edge {
     ...(options.fetch ? { fetch: options.fetch } : {}),
     ...(options.signers ? { signers: options.signers } : {}),
   });
+
+  async function requestForOrigin(
+    request: Request,
+    adapter: EdgeAdapter,
+    span: SpanContext,
+  ): Promise<Request> {
+    const prepared = await (adapter.prepareOriginRequest?.(request) ?? request);
+    const headers = new Headers(prepared.headers);
+    const traceparent = formatTraceparent(span);
+    headers.set('traceparent', traceparent);
+    headers.delete('tracestate');
+    headers.delete('baggage');
+    headers.delete(TRACE_HANDOFF_HEADER);
+    try {
+      headers.set(
+        TRACE_HANDOFF_HEADER,
+        await signTraceHandoff(
+          {
+            traceparent,
+            hashKeyId: await keyId,
+            issuedAt: Date.now(),
+            method: prepared.method,
+            target: traceHandoffTarget(prepared.url),
+          },
+          hashKey,
+        ),
+      );
+    } catch (error) {
+      const failure = new TraceHandoffSigningError(
+        'Agentrail could not sign the origin trace handoff.',
+        { cause: error },
+      );
+      // Reporting may throw in the site's callback; it belongs to waitUntil,
+      // so a capture failure still forwards the application request unsigned.
+      adapter.waitUntil(
+        Promise.resolve().then(() => {
+          onError(failure);
+        }),
+      );
+    }
+    return new Request(prepared, { headers });
+  }
 
   /** A path as it is recorded: the allowlisted query only. */
   function recordedPath(url: URL): { path: string; dropped: boolean } {
@@ -538,6 +590,8 @@ export function createEdge(options: EdgeOptions): Edge {
       headers.set('traceparent', formatTraceparent(span));
       // The caller's vendor state belongs to the caller's trace.
       headers.delete('tracestate');
+      headers.delete('baggage');
+      headers.delete(TRACE_HANDOFF_HEADER);
       const forwarded = new Request(originUrl, {
         method: request.method,
         headers,
@@ -574,7 +628,9 @@ export function createEdge(options: EdgeOptions): Edge {
         const answer = await marked(
           request.method,
           originUrl,
-          await adapter.origin(forwarded),
+          await adapter.origin(
+            await requestForOrigin(forwarded, adapter, span),
+          ),
           observed,
         );
         observed.status = answer.status;
@@ -582,6 +638,7 @@ export function createEdge(options: EdgeOptions): Edge {
         observed.contentType = answer.headers.get('content-type');
         // On every answer, so the session lasts another idle timeout.
         const withCookie = new Response(answer.body, answer);
+        withCookie.headers.delete(TRACE_HANDOFF_HEADER);
         withCookie.headers.append(
           'set-cookie',
           cookie.write(session, url.protocol === 'https:'),
@@ -694,6 +751,7 @@ export function cloudflare(
 export function vercel(options: {
   readonly waitUntil: (work: Promise<unknown>) => void;
   readonly origin: (request: Request) => Promise<Response>;
+  readonly prepareOriginRequest?: EdgeAdapter['prepareOriginRequest'];
 }): EdgeAdapter {
   return {
     clientAddress: (request) =>
@@ -708,6 +766,9 @@ export function vercel(options: {
       ja4: request.headers.get('x-vercel-ja4-digest'),
       verifiedBot: null,
     }),
+    ...(options.prepareOriginRequest === undefined
+      ? {}
+      : { prepareOriginRequest: options.prepareOriginRequest }),
     waitUntil: options.waitUntil,
     origin: options.origin,
     instance: null,

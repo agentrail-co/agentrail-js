@@ -14,6 +14,48 @@ interface Contract {
   readonly ingestRequest: IngestRequestSchema;
   readonly browserCall: object;
   readonly markers: Markers;
+  readonly traceHandoff: TraceHandoffContract;
+  readonly otlp: OtlpContract;
+}
+
+export interface TraceHandoffContract {
+  readonly header: string;
+  readonly maxAgeMs: number;
+  readonly fixtures: readonly {
+    readonly hashKey: string;
+    readonly token: string;
+    readonly input: {
+      readonly traceparent: string;
+      readonly hashKeyId: string;
+      readonly issuedAt: number;
+      readonly method: string;
+      readonly target: string;
+    };
+  }[];
+}
+export interface OtlpContract {
+  readonly traces: { readonly path: string; readonly messageType: string };
+  readonly logs: { readonly path: string; readonly messageType: string };
+  readonly resourceAttributes: Readonly<Record<string, string>>;
+  readonly spanAttributes: Readonly<Record<string, string>>;
+  readonly logAttributes: Readonly<Record<string, string>>;
+  readonly fixtures: {
+    readonly accepted: readonly {
+      readonly name: string;
+      readonly signal: 'traces' | 'logs';
+      readonly request: unknown;
+      readonly expected: {
+        readonly spans: number;
+        readonly events: readonly unknown[];
+        readonly logs: readonly unknown[];
+      };
+    }[];
+    readonly refused: readonly {
+      readonly name: string;
+      readonly signal: 'traces' | 'logs';
+      readonly request: unknown;
+    }[];
+  };
 }
 
 /** The part of the ingest body's schema a test reads directly. */
@@ -63,6 +105,9 @@ const contract = JSON.parse(
     'utf8',
   ),
 ) as Contract;
+
+export const TRACE_HANDOFF = contract.traceHandoff;
+export const OTLP = contract.otlp;
 
 // Strict: a schema JSON Schema forbids is refused here, not read loosely.
 const ajv = new Ajv2020({ allErrors: true, strict: true });

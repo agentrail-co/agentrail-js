@@ -99,6 +99,8 @@ fetch.setTracerProvider(provider);
 
 Retain other customer instrumentation; install only one HTTP and one Undici instrumentation, passing these options to them. Keep the request-aware propagator and HTTP hooks together: extraction alone cannot verify method and path. The factory registers no globals and never changes another exporter's input. The sampler promotes dropped managed spans to **record-only**, preserving the customer's sampled flag. Standard sampled-only exporters retain their sampling; custom exporters that export record-only spans may see additional records. Without this sampler wrapper, dropped entries report `entry_not_recording`, and their ancestry is unavailable. Ordinary spans outside managed requests are not captured by the Agentrail span processor.
 
+For Sentry, compose this sampler around `SentrySampler` while constructing the single customer-owned provider, retaining `SentrySpanProcessor` and its context/propagation setup. A 100% Sentry sample rate still drops HEAD/OPTIONS; merely adding a processor cannot retain those spans. Agentrail's packed installation gate exercises this public composition. In framework admission mode, use the supplied request-aware incoming hook/propagator in the admitted scope and disable automatic incoming instrumentation, so there is one backend entry per request. Handler work after admission is captured; earlier authentication/body parsing is outside that scope.
+
 Pinned compatible OTel family: API 1.9.1, core/trace/resources/context 2.10.0, logs/exporters/HTTP instrumentation 0.221.0, Undici instrumentation 0.31.0. This release supports those APIs; check dependency compatibility when composing a distribution.
 
 ## Delivery and shutdown

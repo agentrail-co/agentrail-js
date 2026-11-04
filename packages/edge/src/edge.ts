@@ -75,6 +75,11 @@ export class IdentifyError extends Error {
   override readonly name = 'IdentifyError';
 }
 
+/** The site's `ignoreRequest` threw: the request is recorded as any other. */
+export class IgnoreRequestError extends Error {
+  override readonly name = 'IgnoreRequestError';
+}
+
 /**
  * What the site's own check reads of a request: never its body, which has
  * gone to the origin by the time the check runs.
@@ -120,6 +125,16 @@ export interface EdgeOptions {
   readonly identify?: (
     request: RequestHead,
   ) => Principal | null | Promise<Principal | null>;
+  /**
+   * Requests this edge passes to the origin untouched and records nothing
+   * of, by the site's own check of their method, URL and headers: the calls
+   * the site's own servers make, which are neither a visitor nor an agent.
+   * Check something only your servers can send, such as a shared secret: a
+   * user agent or an address is what any caller can claim. A check that
+   * throws is told to `onError` as an `IgnoreRequestError`, and the request
+   * is recorded as any other.
+   */
+  readonly ignoreRequest?: (request: RequestHead) => boolean;
   /** The service the events name; the request's host by default. */
   readonly service?: string;
   /**
@@ -566,8 +581,33 @@ export function createEdge(options: EdgeOptions): Edge {
     };
   }
 
+  /** Whether the site's own check leaves this request out; a broken check leaves nothing out. */
+  function ignored(request: Request, adapter: EdgeAdapter): boolean {
+    if (options.ignoreRequest === undefined) return false;
+    try {
+      return options.ignoreRequest(request);
+    } catch (error) {
+      const failure = new IgnoreRequestError(
+        "The site's ignoreRequest threw; the request is recorded.",
+        { cause: error },
+      );
+      adapter.waitUntil(
+        Promise.resolve().then(() => {
+          onError(failure);
+        }),
+      );
+      return false;
+    }
+  }
+
   return {
     async handle(request, adapter) {
+      if (ignored(request, adapter)) {
+        const headers = new Headers(request.headers);
+        // Only this edge signs a handoff, whatever the caller sent.
+        headers.delete(TRACE_HANDOFF_HEADER);
+        return adapter.origin(new Request(request, { headers }));
+      }
       const start = Date.now();
       const url = new URL(request.url);
       const query = markersOffQuery(url.search);

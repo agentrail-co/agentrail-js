@@ -1,3 +1,4 @@
+import { isCaptureSuppressed } from './suppression.js';
 import { context } from '@opentelemetry/api';
 import { SamplingDecision } from '@opentelemetry/sdk-trace';
 import type { Sampler, SpanProcessor } from '@opentelemetry/sdk-trace';
@@ -26,6 +27,7 @@ export function processors(runtime: Runtime) {
   );
   const spanProcessor: SpanProcessor = {
     onStart(span, parent) {
+      if (isCaptureSuppressed(parent)) return;
       const state = runtime.state(parent);
       if (state === undefined) return;
       const mark = runtime.mark(parent);
@@ -44,6 +46,7 @@ export function processors(runtime: Runtime) {
   };
   const logProcessor: LogRecordProcessor = {
     onEmit(record, ctx = context.active()) {
+      if (isCaptureSuppressed(ctx)) return;
       // An unrelated request's log must never inherit a managed request's context.
       if (
         runtime.state(ctx) === undefined &&

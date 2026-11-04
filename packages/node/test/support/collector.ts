@@ -22,6 +22,8 @@ export interface WireLog {
   spanId?: Buffer;
   body?: { stringValue?: string };
   severityNumber?: number;
+  severityText?: string;
+  eventName?: string;
   attributes?: Attribute[];
 }
 interface TraceRequest {

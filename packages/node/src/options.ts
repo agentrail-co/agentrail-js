@@ -1,3 +1,4 @@
+import { reportWithoutCapture } from './suppression.js';
 import { randomUUID } from 'node:crypto';
 import type { PrincipalKind, Surface } from 'agentrail-core';
 
@@ -26,6 +27,8 @@ export interface QueueOptions {
   readonly shutdownTimeoutMs: number;
 }
 export interface NodeOptions {
+  /** Retain customer propagation for unmanaged work; register the returned SDK propagator once. */
+  readonly propagator?: import('@opentelemetry/api').TextMapPropagator;
   readonly collector: { readonly endpoint: string; readonly secret: string };
   readonly hashKey: string;
   readonly serviceName: string;
@@ -106,6 +109,18 @@ export function resolveOptions(input: NodeOptions): ResolvedOptions {
     throw new ConfigurationError(
       'Configure a source secret, workspace hash key and service identity.',
     );
+  if (
+    [input.serviceName, input.serviceInstanceId].some(
+      (value) =>
+        value !== undefined &&
+        (value.length > 4096 ||
+          value.includes('\u0000') ||
+          !value.isWellFormed()),
+    )
+  )
+    throw new ConfigurationError(
+      'Service names and instance IDs must be well-formed text of at most 4096 characters without NUL.',
+    );
   const queue = { ...defaults, ...input.queue };
   if (
     !Object.values(queue).every(
@@ -134,10 +149,11 @@ export function resolveOptions(input: NodeOptions): ResolvedOptions {
     instance: input.serviceInstanceId ?? randomUUID(),
     origins,
     queue,
-    report:
-      input.onError ??
-      ((error) => {
-        console.error(error);
-      }),
+    report: (error) => {
+      reportWithoutCapture(() => {
+        if (input.onError === undefined) console.error(error);
+        else input.onError(error);
+      });
+    },
   };
 }

@@ -1,3 +1,4 @@
+import { isCaptureSuppressed } from './suppression.js';
 import {
   context,
   ROOT_CONTEXT,
@@ -53,6 +54,10 @@ export function createClient(
     identity?: import('@opentelemetry/api').Attributes,
   ) {
     if (
+      !name.isWellFormed() ||
+      !details.kind.isWellFormed() ||
+      name.includes('\u0000') ||
+      details.kind.includes('\u0000') ||
       name.length === 0 ||
       name.length > 256 ||
       details.kind.length === 0 ||
@@ -76,7 +81,7 @@ export function createClient(
       },
       marked,
     );
-    if (!span.isRecording())
+    if (!span.isRecording() && !isCaptureSuppressed(context.active()))
       runtime.options.report(
         new CaptureError('entry_not_recording', 'traces', 1),
       );
@@ -135,6 +140,7 @@ export function createClient(
     },
     milestone,
     log(input) {
+      if (isCaptureSuppressed(context.active())) return;
       const record = makeLog(input, context.active(), runtime);
       if (record !== undefined) queues.logs.add(record);
     },

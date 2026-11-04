@@ -62,7 +62,7 @@ agentrail.log({
 
 The optional Pino 9/10 hook captures synchronously in the caller's async context and composes an existing hook as its second argument. The original logger output is unchanged. The standard OTel log processor is also available. Default exports contain severity, error type, event name, a stable per-record ID and exact span correlation. Arguments, results, headers, arbitrary attributes, exception messages and message bodies are excluded. Generic logs never create journey proof. Set `logs.uncorrelated: false` to exclude logs outside managed requests.
 
-Message text requires an explicit field allowlist, for example `logs: { includeFields: ['msg'] }` for Pino or `['message']` for a standard OTel body. `client.log` selects from `fields`. Only selected top-level scalar fields are serialized, with a 4096-character body limit. Do not select credentials, raw identities or sensitive customer content. Span names for supporting operations are neutralized, exception events and status messages are dropped, URLs retain only the `h` marker query, and resource exports contain service/component/hash-key metadata. Service names/instance IDs, routes, operation names, user agents and explicitly selected fields are customer-controlled context: choose non-sensitive values.
+Message text requires an explicit field allowlist, for example `logs: { includeFields: ['msg'] }` for Pino or `['message']` for a standard OTel body. `client.log` selects from `fields`. Only selected top-level scalar fields are serialized, with a 4096-character body limit. Do not select credentials, raw identities or sensitive customer content. Span names for supporting operations are neutralized, exception events and status messages are dropped, URLs retain only valid `h` markers; a sanitized URL over 4096 characters is omitted while the entry and its trace evidence are retained, and resource exports contain service/component/hash-key metadata. Service names/instance IDs, routes, operation names, user agents and explicitly selected fields are customer-controlled context: choose non-sensitive values.
 
 ## Existing OpenTelemetry provider
 
@@ -79,7 +79,10 @@ import { LoggerProvider } from '@opentelemetry/sdk-logs';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { UndiciInstrumentation } from '@opentelemetry/instrumentation-undici';
 
-const capture = createProcessors(options);
+const capture = createProcessors({
+  ...options,
+  propagator: customerPropagator,
+});
 const provider = new TracerProvider({
   sampler: capture.sampler(
     new ParentBasedSampler({ root: new TraceIdRatioBasedSampler(0.1) }),
@@ -97,9 +100,11 @@ http.setTracerProvider(provider);
 fetch.setTracerProvider(provider);
 ```
 
+Pass the existing `TextMapPropagator` as `options.propagator`, then register the **returned** `capture.propagator` once. It delegates extraction/injection for unmanaged work and prevents a late customer injection from re-adding headers to managed fetches. Keeping the original propagator globally bypasses this boundary: Undici injects after its request hook. For multiple installations, chain the earlier installation's returned propagator as the next one's base. Request-aware hooks still bind the actual destination/method/target before signing.
+
 Retain other customer instrumentation; install only one HTTP and one Undici instrumentation, passing these options to them. Keep the request-aware propagator and HTTP hooks together: extraction alone cannot verify method and path. The factory registers no globals and never changes another exporter's input. The sampler promotes dropped managed spans to **record-only**, preserving the customer's sampled flag. Standard sampled-only exporters retain their sampling; custom exporters that export record-only spans may see additional records. Without this sampler wrapper, dropped entries report `entry_not_recording`, and their ancestry is unavailable. Ordinary spans outside managed requests are not captured by the Agentrail span processor.
 
-For Sentry, compose this sampler around `SentrySampler` while constructing the single customer-owned provider, retaining `SentrySpanProcessor` and its context/propagation setup. A 100% Sentry sample rate still drops HEAD/OPTIONS; merely adding a processor cannot retain those spans. Agentrail's packed installation gate exercises this public composition. In framework admission mode, use the supplied request-aware incoming hook/propagator in the admitted scope and disable automatic incoming instrumentation, so there is one backend entry per request. Handler work after admission is captured; earlier authentication/body parsing is outside that scope.
+For Sentry, compose this sampler around `SentrySampler` while constructing the single customer-owned provider, retaining `SentrySpanProcessor` and its context manager, with `new SentryPropagator()` passed as the base and the returned capture propagator registered globally. A 100% Sentry sample rate still drops HEAD/OPTIONS; merely adding a processor cannot retain those spans. Agentrail's packed installation gate exercises this public composition. In framework admission mode, use the supplied request-aware incoming hook/propagator in the admitted scope and disable automatic incoming instrumentation, so there is one backend entry per request. Handler work after admission is captured; earlier authentication/body parsing is outside that scope.
 
 Pinned compatible OTel family: API 1.9.1, core/trace/resources/context 2.10.0, logs/exporters/HTTP instrumentation 0.221.0, Undici instrumentation 0.31.0. This release supports those APIs; check dependency compatibility when composing a distribution.
 
@@ -107,7 +112,7 @@ Pinned compatible OTel family: API 1.9.1, core/trace/resources/context 2.10.0, l
 
 Defaults per signal: 2048 records including the in-flight batch, batches of 128, a 1000 ms schedule, 5000 ms export timeout, and 10000 ms flush/shutdown deadlines. Override with `queue`. Positive integer limits are required, batch size cannot exceed capacity and flush/shutdown deadlines cannot be shorter than the export timeout. One batch is in flight per signal. The official exporter retries retryable OTLP responses within its export deadline; permanent rejections and exhausted retries are reported and dropped. This is a bounded memory queue, without disk persistence.
 
-`await agentrail.flush()` drains capture within the configured bound. `await agentrail.shutdown()` stops instrumentation and drains once; call it during application shutdown. `diagnostics()` reports accepted, exported, dropped and pending records per signal. Overflow, export failure, deadline loss, refused handoff and missing capture context go to `onError` (console by default). These capture outcomes do not replace an application response. Flush completion means attempts ended; inspect diagnostics/errors for delivery loss.
+`await agentrail.flush()` drains capture within the configured bound. `await agentrail.shutdown()` stops instrumentation and drains once; call it during application shutdown. `diagnostics()` reports accepted, exported, dropped and pending records per signal. Overflow, export failure, deadline loss, refused handoff and missing capture context go to `onError` (console by default). SDK error reporting runs outside capture, including when routed through the same Pino or OTel logger, so diagnostics cannot feed their own full queue. These capture outcomes do not replace an application response. Flush completion means attempts ended; inspect diagnostics/errors for delivery loss.
 
 ## MCP callback adapter
 

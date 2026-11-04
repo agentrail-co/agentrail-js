@@ -13,11 +13,13 @@ import {
   TRACE_HANDOFF_HEADER,
   parseTraceparent,
 } from 'agentrail-core';
+import { isCaptureSuppressed } from './suppression.js';
 import { CaptureError } from './options.js';
 import type { Runtime, State } from './runtime.js';
 
 const ownedHeaders = [
   'traceparent',
+  'sentry-trace',
   'tracestate',
   'baggage',
   TRACE_HANDOFF_HEADER,
@@ -29,19 +31,23 @@ export function httpCapture(runtime: Runtime) {
   const requests = new WeakMap<object, Context>();
   const ports = new WeakMap<object, number>();
   const collector = new URL(runtime.options.endpoint);
+  const base = runtime.options.input.propagator;
   const propagator: TextMapPropagator = {
-    // Propagation happens in hooks, where actual destination/method/path are known.
-    // No headers are injected without the request-aware destination gate.
-    inject() {
-      return;
+    // Undici injects AFTER requestHook. Managed propagation is already signed/filtered there.
+    inject(ctx, carrier: unknown, setter) {
+      if (runtime.state(ctx) !== undefined || isCaptureSuppressed(ctx)) return;
+      base?.inject(ctx, carrier, setter);
     },
-    extract(ctx, carrier: unknown) {
-      return typeof carrier === 'object' && carrier !== null
-        ? (requests.get(carrier) ?? ROOT_CONTEXT)
-        : ROOT_CONTEXT;
+    extract(ctx, carrier: unknown, getter) {
+      const incoming =
+        typeof carrier === 'object' && carrier !== null
+          ? requests.get(carrier)
+          : undefined;
+      return incoming ?? base?.extract(ctx, carrier, getter) ?? ROOT_CONTEXT;
     },
-    fields: () => [...ownedHeaders],
+    fields: () => [...new Set([...ownedHeaders, ...(base?.fields() ?? [])])],
   };
+
   function sign(
     span: Span,
     method: string,

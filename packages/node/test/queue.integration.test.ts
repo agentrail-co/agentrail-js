@@ -1,3 +1,7 @@
+import { Writable } from 'node:stream';
+import pinoLogger from 'pino';
+import { LoggerProvider } from '@opentelemetry/sdk-logs';
+import { pino } from '../src/pino.js';
 import { performance } from 'node:perf_hooks';
 import { trace } from '@opentelemetry/api';
 import { TracerProvider } from '@opentelemetry/sdk-trace';
@@ -12,6 +16,75 @@ import { collector, attributesOf } from './support/collector.js';
 import { options } from './support/options.js';
 
 describe('delivery, privacy and provider ownership', () => {
+  // Fails if SDK diagnostics feed back through a supported logger into their own full queue.
+  it.each(['pino', 'otel'] as const)(
+    'does not recapture its own %s failure reports during overflow/outage',
+    async (bridge) => {
+      const sink = await collector([0]);
+      const errors: CaptureError[] = [];
+      let reporting = true;
+      const diagnostic = (error: Error) => {
+        if (bridge === 'pino') logger.error(error);
+        else
+          logs
+            .getLogger('diagnostics')
+            .emit({ severityNumber: 17, body: error.message });
+      };
+      const sdk = createProcessors({
+        ...options(sink.endpoint),
+        queue: {
+          maxRecords: 1,
+          batchSize: 1,
+          exportTimeoutMs: 100,
+          flushTimeoutMs: 200,
+          shutdownTimeoutMs: 200,
+        },
+        onError: (error) => {
+          errors.push(error);
+          if (reporting) diagnostic(error);
+        },
+      });
+      const output: string[] = [];
+      const logger = pinoLogger(
+        { hooks: pino(sdk.client) },
+        new Writable({
+          write(chunk, _encoding, done) {
+            output.push(String(chunk));
+            done();
+          },
+        }),
+      );
+      const logs = new LoggerProvider({ processors: [sdk.logProcessor] });
+      const emit = () => {
+        if (bridge === 'pino') logger.info('ordinary application log');
+        else logs.getLogger('application').emit({ severityNumber: 9 });
+      };
+      try {
+        expect(() => {
+          emit();
+          emit();
+        }).not.toThrow();
+        await sdk.client.flush();
+        expect(errors.map((error) => error.code)).toEqual([
+          'queue_full',
+          'export_failed',
+        ]);
+        expect(sdk.client.diagnostics().logs).toEqual({
+          accepted: 1,
+          exported: 0,
+          dropped: 2,
+          pending: 0,
+        });
+        if (bridge === 'pino') expect(output).toHaveLength(4);
+      } finally {
+        reporting = false;
+        await sdk.client.shutdown();
+        await logs.shutdown();
+        await sink.close();
+      }
+    },
+  );
+
   // Fails if retryable OTLP failures become permanent, or a retry creates a second logical log ID.
   it('retries transient refusal with the same sanitized record', async () => {
     const sink = await collector([503, 200]);
@@ -32,6 +105,8 @@ describe('delivery, privacy and provider ownership', () => {
       sdk.client.log({
         severityNumber: 17,
         errorType: 'SyntheticError',
+        severityText: 'ER\u0000ROR',
+        eventName: 'checkout.\u0000failed',
         fields: {
           msg: 'selected synthetic message',
           password: 'SYNTHETIC_PRIVATE',
@@ -40,6 +115,8 @@ describe('delivery, privacy and provider ownership', () => {
       await sdk.client.flush();
       expect(sink.packets).toHaveLength(2);
       expect(sink.packets[0]?.bytes).toEqual(sink.packets[1]?.bytes);
+      expect(sink.logs()[0]?.severityText).toBe('ERROR');
+      expect(sink.logs()[0]?.eventName).toBe('checkout.failed');
       expect(sink.logs()[0]?.body?.stringValue).toBe(
         '{"msg":"selected synthetic message"}',
       );

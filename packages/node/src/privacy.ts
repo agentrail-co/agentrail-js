@@ -1,3 +1,4 @@
+import { parseMarker } from 'agentrail-core';
 import { randomUUID } from 'node:crypto';
 import { trace, SpanKind } from '@opentelemetry/api';
 import type { Attributes, Context, SpanContext } from '@opentelemetry/api';
@@ -44,8 +45,10 @@ function sanitizedUrl(input: unknown): string | undefined {
   url.hash = '';
   url.username = '';
   url.password = '';
-  for (const marker of markers) url.searchParams.append('h', marker);
-  return url.href;
+  for (const marker of markers)
+    if (parseMarker(marker).valid) url.searchParams.append('h', marker);
+  // Omit optional URL evidence instead of truncating its meaning or rejecting unrelated spans in the batch.
+  return url.href.length <= 4096 ? url.href : undefined;
 }
 export function copySpan(
   span: ReadableSpan,
@@ -105,19 +108,24 @@ export function copySpan(
   const mcp = metadata.mark?.mcp;
   if (mcp !== undefined) {
     if (mcp.client !== undefined)
-      attrs['agentrail.mcp.client.name'] = mcp.client;
+      attrs['agentrail.mcp.client.name'] = boundedText(mcp.client, 128);
     if (mcp.clientVersion !== undefined)
-      attrs['agentrail.mcp.client.version'] = mcp.clientVersion;
+      attrs['agentrail.mcp.client.version'] = boundedText(
+        mcp.clientVersion,
+        128,
+      );
     if (mcp.protocol !== undefined)
-      attrs['agentrail.mcp.protocol.version'] = mcp.protocol;
+      attrs['agentrail.mcp.protocol.version'] = boundedText(mcp.protocol, 64);
   }
   const parent = span.parentSpanContext;
   return {
-    name:
+    name: boundedText(
       metadata.mark?.name ??
-      (typeof attrs['http.request.method'] === 'string'
-        ? `HTTP ${attrs['http.request.method']}`
-        : 'backend.operation'),
+        (typeof attrs['http.request.method'] === 'string'
+          ? `HTTP ${attrs['http.request.method']}`
+          : 'backend.operation'),
+      4096,
+    ),
     kind: span.kind,
     spanContext: () => spanContextOnly(span.spanContext()),
     ...(parent === undefined
@@ -190,10 +198,10 @@ export function copyLog(
       : { severityNumber: record.severityNumber }),
     ...(record.severityText === undefined
       ? {}
-      : { severityText: record.severityText.slice(0, 64) }),
+      : { severityText: boundedText(record.severityText, 64) }),
     ...(record.eventName === undefined
       ? {}
-      : { eventName: record.eventName.slice(0, 256) }),
+      : { eventName: boundedText(record.eventName, 256) }),
     ...(body === undefined ? {} : { body }),
     attributes,
     resource: runtime.resource,

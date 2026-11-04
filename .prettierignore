@@ -1,0 +1,5 @@
+dist
+pnpm-lock.yaml
+# Argus's apps/api/sdk-contract.json, copied byte for byte: argus's test owns
+# its format.
+packages/contract/sdk-contract.json

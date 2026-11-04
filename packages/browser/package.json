@@ -1,0 +1,43 @@
+{
+  "name": "agentrail-browser",
+  "version": "0.1.0",
+  "description": "The Agentrail browser script: on a site's pages, it records the steps a person or an agent in a browser takes.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agentrail-co/agentrail-js.git",
+    "directory": "packages/browser"
+  },
+  "homepage": "https://github.com/agentrail-co/agentrail-js/tree/main/packages/browser#readme",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./agentrail.js": "./dist/agentrail.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && tsx scripts/bundle.mts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "agentrail-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "agentrail-contract": "workspace:*",
+    "esbuild": "0.28.1",
+    "jsdom": "30.1.0",
+    "tsx": "4.23.11"
+  }
+}

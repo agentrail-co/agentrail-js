@@ -1,0 +1,39 @@
+{
+  "name": "agentrail-edge",
+  "version": "0.1.0",
+  "description": "The Agentrail edge: in front of a site on Cloudflare Workers, Vercel or any Fetch API runtime, it records each request and marks the links agents follow.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agentrail-co/agentrail-js.git",
+    "directory": "packages/edge"
+  },
+  "homepage": "https://github.com/agentrail-co/agentrail-js/tree/main/packages/edge#readme",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "agentrail-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "agentrail-contract": "workspace:*"
+  }
+}

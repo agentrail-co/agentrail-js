@@ -5,6 +5,7 @@
  */
 export {
   IdentifyError,
+  TraceHandoffSigningError,
   cloudflare,
   createEdge,
   vercel,

@@ -31,6 +31,20 @@ npm install agentrail-core
 
 Before 1.0, a minor version (0.1 to 0.2) may change what the package offers.
 
+## Authenticated trace handoff
+
+`signTraceHandoff(input, hashKey)` and `verifyTraceHandoff(token, expected)`
+share a versioned, domain-separated HMAC-SHA256 format. Verification binds the
+trace parent, key ID, method and exact origin-form target, and refuses future
+or older-than-60-second tokens. `traceHandoffTarget(url)` retains encoded path
+and query bytes, including a trailing empty query, and excludes the fragment.
+The compatibility contract contains an independently calculated golden token.
+
+`readTraceHandoff` returns an unverified candidate for synchronous OTel
+propagators. Its signature must verify over the returned bytes before its
+context becomes trusted. The async verifier performs that check with WebCrypto;
+`agentrail-node` performs it synchronously before OTel chooses a parent.
+
 ## Licence
 
 [Apache-2.0](LICENSE).

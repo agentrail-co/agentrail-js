@@ -34,6 +34,18 @@ export {
   type SessionCookieOptions,
 } from './session.js';
 export { hashKeyIdOf, keyedHash } from './hash.js';
+export {
+  TRACE_HANDOFF_HEADER,
+  TraceHandoffInputError,
+  readTraceHandoff,
+  signTraceHandoff,
+  traceHandoffTarget,
+  verifyTraceHandoff,
+  type TraceHandoffInput,
+  type TraceHandoffVerification,
+  type TraceHandoffVerificationInput,
+  type TraceHandoffRefusal,
+} from './trace-handoff.js';
 export { newId } from './id.js';
 export {
   KNOWN_SIGNERS,

@@ -1,7 +1,7 @@
 name: Release
 
-# Publishes agentrail-core, agentrail-edge and agentrail-browser to npm when a
-# version tag is pushed. The three share one version, and the tag names it.
+# Publishes agentrail-core, agentrail-edge agentrail-browser and agentrail-node to npm when a
+# version tag is pushed. The four share one version, and the tag names it.
 # npm trusts this workflow and the `npm` environment (trusted publishing), so
 # no token is stored anywhere, and it records provenance: a signed link from
 # each package to this repository and commit. A pre-release (`0.1.0-dev.1`)
@@ -33,7 +33,7 @@ jobs:
           registry-url: https://registry.npmjs.org
       - name: Check the tag names every package's version
         run: |
-          for package in core edge browser; do
+          for package in core edge browser node; do
             version="$(node -p "require('./packages/${package}/package.json').version")"
             if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
               echo "::error::Tag ${GITHUB_REF_NAME} does not match agentrail-${package} ${version}"
@@ -55,7 +55,7 @@ jobs:
       # publishes the tarballs, with trusted publishing.
       - name: Pack
         run: |
-          for package in core edge browser; do
+          for package in core edge browser node; do
             pnpm --dir "packages/${package}" pack --pack-destination "${RUNNER_TEMP}/packages"
           done
       # npm never takes a version twice, so a run that published some
@@ -70,9 +70,9 @@ jobs:
             *-*) tag=next ;;
             *) tag=latest ;;
           esac
-          for package in core edge browser; do
+          for package in core edge browser node; do
             name="agentrail-${package}"
-            published="$(npm view "$name" versions --json | node -e "console.log(JSON.parse(require('node:fs').readFileSync(0, 'utf8')).includes(process.argv[1]))" "$version")"
+            published="$(node .github/is-published.mjs "$name" "$version")"
             if [ "$published" = true ]; then
               echo "::notice::${name}@${version} is already on npm; skipped"
               continue

@@ -1,7 +1,7 @@
 # agentrail-js agent map
 
 The Agentrail SDKs for JavaScript, published to npm as `agentrail-core`,
-`agentrail-edge` and `agentrail-browser` (`packages/*`). They send events to
+`agentrail-edge`, `agentrail-browser` and `agentrail-node` (`packages/*`). They send events to
 the Agentrail collector, whose linking engine is private to Argus (the
 private `agentrail-co/argus` repository). What the collector takes is
 `packages/contract/sdk-contract.json`, copied from Argus.
@@ -30,7 +30,7 @@ private `agentrail-co/argus` repository). What the collector takes is
 - `packages/contract/sdk-contract.json` is Argus's: never edit it here. A
   change the collector must take starts in Argus, and its new contract is
   copied here (`packages/contract/README.md`).
-- The three packages share one version, bumped together in each
+- The four packages share one version, bumped together in each
   `package.json` and `packages/core/src/version.ts`; a `v<version>` tag
   publishes them.
 

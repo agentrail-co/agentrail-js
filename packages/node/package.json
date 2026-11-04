@@ -1,0 +1,64 @@
+{
+  "name": "agentrail-node",
+  "version": "0.2.0",
+  "description": "Backend HTTP traces, structured logs and MCP journey context for Agentrail.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agentrail-co/agentrail-js.git",
+    "directory": "packages/node"
+  },
+  "homepage": "https://github.com/agentrail-co/agentrail-js/tree/main/packages/node#readme",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./pino": {
+      "types": "./dist/pino.d.ts",
+      "import": "./dist/pino.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "agentrail-core": "workspace:*",
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/core": "2.10.0",
+    "@opentelemetry/context-async-hooks": "2.10.0",
+    "@opentelemetry/resources": "2.10.0",
+    "@opentelemetry/sdk-trace": "2.10.0",
+    "@opentelemetry/api-logs": "0.221.0",
+    "@opentelemetry/sdk-logs": "0.221.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "0.221.0",
+    "@opentelemetry/exporter-logs-otlp-proto": "0.221.0",
+    "@opentelemetry/instrumentation": "0.221.0",
+    "@opentelemetry/instrumentation-http": "0.221.0",
+    "@opentelemetry/instrumentation-undici": "0.31.0"
+  },
+  "peerDependencies": {
+    "pino": ">=9 <11"
+  },
+  "peerDependenciesMeta": {
+    "pino": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "agentrail-contract": "workspace:*",
+    "pino": "10.3.1",
+    "protobufjs": "7.6.5"
+  }
+}

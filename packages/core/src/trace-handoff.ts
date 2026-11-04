@@ -103,13 +103,13 @@ function payload(input: TraceHandoffInput): Uint8Array<ArrayBuffer> {
   );
 }
 
-export async function signTraceHandoff(
-  input: TraceHandoffInput,
-  hashKey: string,
-): Promise<string> {
-  const key = await keyOf(hashKey);
+/** Shared canonical bytes for runtimes whose OTel hooks require synchronous HMAC. */
+export function encodeTraceHandoff(input: TraceHandoffInput): {
+  bytes: Uint8Array<ArrayBuffer>;
+  tokenPrefix: string;
+} {
   if (
-    input.hashKeyId !== key.id ||
+    !/^[0-9a-f]{16}$/u.test(input.hashKeyId) ||
     input.traceparent !== input.traceparent.trim() ||
     parseTraceparent(input.traceparent) === null ||
     !Number.isSafeInteger(input.issuedAt) ||
@@ -117,11 +117,24 @@ export async function signTraceHandoff(
     !validRequest(input.method, input.target)
   )
     throw new TraceHandoffInputError();
-  const mac = await crypto.subtle.sign('HMAC', key.key, payload(input));
+  return {
+    bytes: payload(input),
+    tokenPrefix: `ah1.${input.hashKeyId}.${input.issuedAt}.${input.traceparent}.`,
+  };
+}
+
+export async function signTraceHandoff(
+  input: TraceHandoffInput,
+  hashKey: string,
+): Promise<string> {
+  const key = await keyOf(hashKey);
+  if (input.hashKeyId !== key.id) throw new TraceHandoffInputError();
+  const encoded = encodeTraceHandoff(input);
+  const mac = await crypto.subtle.sign('HMAC', key.key, encoded.bytes);
   const hex = [...new Uint8Array(mac)]
     .map((byte) => byte.toString(16).padStart(2, '0'))
     .join('');
-  return `ah1.${input.hashKeyId}.${input.issuedAt}.${input.traceparent}.${hex}`;
+  return encoded.tokenPrefix + hex;
 }
 
 function parsedToken(token: string) {

@@ -8,10 +8,12 @@ collector, which links the steps into journeys.
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`agentrail-edge`](packages/edge)       | In front of a site on Cloudflare Workers, Vercel or any Fetch API runtime: records each request, and marks the links in answers meant for agents. |
 | [`agentrail-browser`](packages/browser) | The script on a site's pages: page views, the trace on the page's own calls, and WebMCP tool calls.                                               |
+| [`agentrail-node`](packages/node)       | Node backend HTTP/fetch traces, structured logs, verified application identity and MCP calls.                                                     |
 | [`agentrail-core`](packages/core)       | What both share: the event the collector takes, markers, the keyed hash, W3C trace context, the session, and the client that sends events.        |
 
 ```sh
 npm install agentrail-edge      # in front of the site
+npm install agentrail-node      # in the Node backend
 npm install agentrail-browser   # only for a site that bundles the script itself
 ```
 
@@ -29,8 +31,8 @@ pnpm test
 
 ## Releasing
 
-The three packages share one version and are released together: a
-`v<version>` tag publishes all three (`.github/workflows/release.yml`). A
+The four packages share one version and are released together: a
+`v<version>` tag publishes all four (`.github/workflows/release.yml`). A
 version such as `0.2.0` goes to npm's `latest` tag, and a trial build such as
 `0.2.0-dev.1` to `next`.
 

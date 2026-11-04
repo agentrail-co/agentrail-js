@@ -38,6 +38,7 @@ export {
   TRACE_HANDOFF_HEADER,
   TraceHandoffInputError,
   readTraceHandoff,
+  encodeTraceHandoff,
   signTraceHandoff,
   traceHandoffTarget,
   verifyTraceHandoff,

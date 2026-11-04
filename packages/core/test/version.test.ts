@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import { VERSION } from '../src/index.js';
 
-const PACKAGES = ['core', 'edge', 'browser'];
+const PACKAGES = ['core', 'edge', 'browser', 'node'];
 
 describe('the version', () => {
   // Fails if someone bumps one package's version without the others or

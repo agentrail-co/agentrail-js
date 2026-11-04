@@ -10,6 +10,12 @@ export interface VerifiedIdentity {
 export interface MilestoneContext {
   readonly surface: Surface;
   readonly kind: string;
+  readonly mcp?: {
+    readonly method: string;
+    readonly client?: string;
+    readonly clientVersion?: string;
+    readonly protocol?: string;
+  };
 }
 export interface QueueOptions {
   readonly maxRecords: number;

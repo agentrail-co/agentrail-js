@@ -24,9 +24,17 @@ export function spanContextOnly(input: SpanContext): SpanContext {
   };
 }
 const scope = { name: 'agentrail-node' };
-function text(input: unknown): string | undefined {
-  return typeof input === 'string' ? input.slice(0, 4096) : undefined;
+export function boundedText(input: string, limit: number): string;
+export function boundedText(input: unknown, limit: number): string | undefined;
+export function boundedText(input: unknown, limit: number): string | undefined {
+  return typeof input === 'string'
+    ? input.replaceAll('\u0000', '').slice(0, limit).toWellFormed()
+    : undefined;
 }
+function text(input: unknown): string | undefined {
+  return boundedText(input, 4096);
+}
+
 function sanitizedUrl(input: unknown): string | undefined {
   if (typeof input !== 'string' || !URL.canParse(input)) return undefined;
   const url = new URL(input);
@@ -64,7 +72,7 @@ export function copySpan(
   };
   for (const [key, value] of Object.entries(fields))
     if (typeof value === 'number' || typeof value === 'string')
-      attrs[key] = typeof value === 'string' ? value.slice(0, 4096) : value;
+      attrs[key] = typeof value === 'string' ? boundedText(value, 4096) : value;
   const address = original['server.address'];
   const path = original['url.path'];
   const scheme = original['url.scheme'];
@@ -94,6 +102,15 @@ export function copySpan(
       'agentrail.step.surface': metadata.mark.surface,
       'agentrail.step.kind': metadata.mark.kind,
     });
+  const mcp = metadata.mark?.mcp;
+  if (mcp !== undefined) {
+    if (mcp.client !== undefined)
+      attrs['agentrail.mcp.client.name'] = mcp.client;
+    if (mcp.clientVersion !== undefined)
+      attrs['agentrail.mcp.client.version'] = mcp.clientVersion;
+    if (mcp.protocol !== undefined)
+      attrs['agentrail.mcp.protocol.version'] = mcp.protocol;
+  }
   const parent = span.parentSpanContext;
   return {
     name:
@@ -131,7 +148,7 @@ function selectedBody(
   const result: Record<string, string | number | boolean | null> = {};
   for (const field of selected) {
     const value = fields[field];
-    if (typeof value === 'string') result[field] = value.slice(0, 4096);
+    if (typeof value === 'string') result[field] = boundedText(value, 4096);
     else if (
       typeof value === 'boolean' ||
       value === null ||

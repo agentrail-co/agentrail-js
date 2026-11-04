@@ -18,6 +18,10 @@
     "./pino": {
       "types": "./dist/pino.d.ts",
       "import": "./dist/pino.js"
+    },
+    "./mcp": {
+      "types": "./dist/mcp.d.ts",
+      "import": "./dist/mcp.js"
     }
   },
   "files": [
@@ -49,16 +53,23 @@
     "@opentelemetry/instrumentation-undici": "0.31.0"
   },
   "peerDependencies": {
-    "pino": ">=9 <11"
+    "pino": ">=9 <11",
+    "@modelcontextprotocol/server": ">=2.3.1 <3"
   },
   "peerDependenciesMeta": {
     "pino": {
+      "optional": true
+    },
+    "@modelcontextprotocol/server": {
       "optional": true
     }
   },
   "devDependencies": {
     "agentrail-contract": "workspace:*",
     "pino": "10.3.1",
-    "protobufjs": "7.6.5"
+    "protobufjs": "7.6.5",
+    "@modelcontextprotocol/server": "2.3.1",
+    "@modelcontextprotocol/client": "2.3.1",
+    "zod": "4.4.3"
   }
 }

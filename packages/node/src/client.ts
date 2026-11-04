@@ -103,6 +103,7 @@ export function createClient(
         return await run();
       } catch (error) {
         span.setStatus({ code: SpanStatusCode.ERROR });
+        if (error instanceof Error) span.setAttribute('error.type', error.name);
         throw error;
       } finally {
         span.end();

@@ -106,3 +106,23 @@ Pinned compatible OTel family: API 1.9.1, core/trace/resources/context 2.10.0, l
 Defaults per signal: 2048 records including the in-flight batch, batches of 128, a 1000 ms schedule, 5000 ms export timeout, and 10000 ms flush/shutdown deadlines. Override with `queue`. Positive integer limits are required, batch size cannot exceed capacity and flush/shutdown deadlines cannot be shorter than the export timeout. One batch is in flight per signal. The official exporter retries retryable OTLP responses within its export deadline; permanent rejections and exhausted retries are reported and dropped. This is a bounded memory queue, without disk persistence.
 
 `await agentrail.flush()` drains capture within the configured bound. `await agentrail.shutdown()` stops instrumentation and drains once; call it during application shutdown. `diagnostics()` reports accepted, exported, dropped and pending records per signal. Overflow, export failure, deadline loss, refused handoff and missing capture context go to `onError` (console by default). These capture outcomes do not replace an application response. Flush completion means attempts ended; inspect diagnostics/errors for delivery loss.
+
+## MCP callback adapter
+
+```ts
+import { McpServer, type ToolCallback } from '@modelcontextprotocol/server';
+import { mcp } from 'agentrail-node/mcp';
+const server = new McpServer({ name: 'orders', version: '1' });
+const capture = mcp({ client: agentrail });
+const checkout: ToolCallback = async (ctx) => {
+  // Authentication happens in the application's HTTP/auth boundary.
+  return { content: [{ type: 'text', text: 'done' }] };
+};
+server.registerTool('checkout', {}, capture.tool('checkout', checkout));
+// capture.resource(registeredName, handler) and capture.prompt(registeredName, handler)
+// wrap their respective public registration callbacks too.
+```
+
+The optional adapter targets `@modelcontextprotocol/server` 2.3.1 and public registration callbacks, without modifying private handlers or transports. Use a callback typed with the SDK's schema, for example `ToolCallback<typeof inputSchema>`, for typed tool arguments. With HTTP capture installed, each execution becomes a nested MCP step with a distinct span, exact log correlation and inherited application-verified identity. Outside an HTTP request, it starts its own managed operation. It captures the registered operation name, method, client name/version, protocol and error outcome; arguments, result text, resource URIs and prompt content stay off. Pass a stable registered resource name rather than the caller's URI.
+
+MCP 2026-07-28 metadata comes from the request's public context envelope. Legacy 2025-11-25 HTTP calls retain protocol metadata; a stateless server may have no client name after its discarded initialize request. The adapter keeps no initialize cache across callers. Client info and supplied trace metadata remain untrusted and cannot assert a principal. `isError` results mark the operation as failed while preserving the original result. Thrown application errors retain their original identity. Tests exercise modern tool/resource/prompt requests and the official client's legacy HTTP exchange; other MCP SDK versions/transports have not been verified in this release.

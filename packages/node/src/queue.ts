@@ -66,10 +66,13 @@ export class ExportQueue<T> {
         finished = true;
         clearTimeout(timer);
         this.cancelActive = undefined;
-        if (result.code === ExportResultCode.SUCCESS)
-          this.stats.exported += batch.length;
-        else this.drop('export_failed', batch.length, result.error);
-        resolve();
+        try {
+          if (result.code === ExportResultCode.SUCCESS)
+            this.stats.exported += batch.length;
+          else this.drop('export_failed', batch.length, result.error);
+        } finally {
+          resolve();
+        }
       };
       const timer = setTimeout(() => {
         done({
@@ -101,6 +104,9 @@ export class ExportQueue<T> {
       }
     })().finally(() => {
       this.active = undefined;
+      // A record can arrive after the loop ended but before this microtask.
+      // Chain its drain so flush/shutdown also wait for that delivery.
+      if (this.records.length > 0) return this.drain();
     });
     return this.active;
   }

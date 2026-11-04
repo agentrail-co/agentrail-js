@@ -149,24 +149,53 @@ export function copySpan(
     droppedLinksCount: 0,
   };
 }
+/** Fit an already-sanitized string, including JSON escaping, without splitting a code point. */
+function fitLogText(value: string, budget: number): string {
+  const prefix = (length: number) => {
+    const part = value.slice(0, length);
+    return part.isWellFormed() ? part : part.slice(0, -1);
+  };
+  let low = 0;
+  let high = value.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (JSON.stringify(prefix(middle)).length <= budget) low = middle;
+    else high = middle - 1;
+  }
+  return prefix(low);
+}
+
 function selectedBody(
   fields: Readonly<Record<string, unknown>>,
   selected: readonly string[],
 ): string | undefined {
-  const result: Record<string, string | number | boolean | null> = {};
+  let result: Record<string, string | number | boolean | null> = {};
+  let body: string | undefined;
   for (const field of selected) {
     const value = fields[field];
-    if (typeof value === 'string') result[field] = boundedText(value, 4096);
+    let scalar: string | number | boolean | null;
+    if (typeof value === 'string') scalar = boundedText(value, 4096);
     else if (
       typeof value === 'boolean' ||
       value === null ||
       (typeof value === 'number' && Number.isFinite(value))
     )
-      result[field] = value;
+      scalar = value;
+    else continue;
+    const candidate = { ...result, [field]: scalar };
+    let encoded = JSON.stringify(candidate);
+    if (encoded.length > 4096) {
+      if (typeof scalar !== 'string') continue;
+      const overhead = JSON.stringify({ ...result, [field]: '' }).length - 2;
+      const budget = 4096 - overhead;
+      if (budget < 2) continue;
+      candidate[field] = fitLogText(scalar, budget);
+      encoded = JSON.stringify(candidate);
+    }
+    result = candidate;
+    body = encoded;
   }
-  return Object.keys(result).length === 0
-    ? undefined
-    : JSON.stringify(result).slice(0, 4096);
+  return body;
 }
 export function copyLog(
   record: ReadableLogRecord,

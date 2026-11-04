@@ -151,8 +151,19 @@ export function resolveOptions(input: NodeOptions): ResolvedOptions {
     queue,
     report: (error) => {
       reportWithoutCapture(() => {
-        if (input.onError === undefined) console.error(error);
-        else input.onError(error);
+        if (input.onError === undefined) {
+          console.error(error);
+          return;
+        }
+        try {
+          input.onError(error);
+        } catch (callbackError) {
+          console.error(
+            'Agentrail onError callback failed.',
+            callbackError,
+            error,
+          );
+        }
       });
     },
   };

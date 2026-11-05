@@ -61,7 +61,8 @@ function wrapped(tool: Tool, context: ToolContext): Tool {
           browserEvent(context.recorder, {
             kind: BROWSER_EVENT_KINDS.toolExecuted,
             start,
-            end: context.now(),
+            // The page's clock follows the device's, which can be set back.
+            end: Math.max(start, context.now()),
             span: { traceId: page.traceId, spanId: newSpanId() },
             parentSpanId: page.spanId,
             spanKind: 'internal',

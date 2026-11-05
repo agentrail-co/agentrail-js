@@ -603,10 +603,14 @@ export function createEdge(options: EdgeOptions): Edge {
   return {
     async handle(request, adapter) {
       if (ignored(request, adapter)) {
-        const headers = new Headers(request.headers);
+        // The site's own rewrite still applies: it decides where a request
+        // goes, which is nothing to do with whether it is recorded.
+        const prepared = await (adapter.prepareOriginRequest?.(request) ??
+          request);
+        const headers = new Headers(prepared.headers);
         // Only this edge signs a handoff, whatever the caller sent.
         headers.delete(TRACE_HANDOFF_HEADER);
-        return adapter.origin(new Request(request, { headers }));
+        return adapter.origin(new Request(prepared, { headers }));
       }
       const start = Date.now();
       const url = new URL(request.url);

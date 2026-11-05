@@ -340,6 +340,26 @@ describe("the page's calls", () => {
     }
   });
 
+  // Fails if someone takes a call's end from the clock alone: the page's clock
+  // follows the device's, and a device set back during a call would record a
+  // call that ended before it began.
+  it('never records a call ending before it began when the device clock moves back', async () => {
+    const site = onPage({ behaviour: false, fingerprint: false }, (url) => {
+      if (url.endsWith('/v1/slow')) vi.setSystemTime(Date.now() - 3_600_000);
+      return new Response('{}', { status: 200 });
+    });
+    try {
+      await window.fetch('/v1/slow');
+      const call = (await eventsOf(site)).find(
+        (event) => event.kind === 'http.client',
+      );
+
+      expect(call?.end).toBeGreaterThanOrEqual(call?.start ?? Infinity);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // Fails if someone reads a call's parent when it ends rather than when it
   // started: a call a single-page app's route change overtook would name a
   // parent in another trace than its own, and the engine could not join it.

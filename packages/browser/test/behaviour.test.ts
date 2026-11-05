@@ -1,5 +1,5 @@
 import { linkMarker, newMarker } from 'agentrail-core';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { KEY_CLASSES, type BrowserCall, type Frame } from '../src/index.js';
 import { onPage } from './support/page.js';
@@ -264,6 +264,41 @@ describe("the page's WebMCP tools", () => {
     const body = JSON.stringify(await site.calls());
     expect(body).not.toContain('person@example.test');
     expect(body).not.toContain('4242');
+  });
+
+  // Fails if someone takes a tool call's end from the clock alone: a device
+  // set back while a tool ran would record a call that ended before it began.
+  it('never records a tool call ending before it began when the device clock moves back', async () => {
+    const registered: { execute: (input: unknown) => Promise<unknown> }[] = [];
+    Object.defineProperty(holder, 'modelContext', {
+      configurable: true,
+      value: {
+        registerTool(tool: { execute: (input: unknown) => Promise<unknown> }) {
+          registered.push(tool);
+        },
+      },
+    });
+    const site = onPage({ behaviour: false, fingerprint: false });
+    const context = holder.modelContext as {
+      registerTool: (tool: object) => void;
+    };
+    context.registerTool({
+      name: 'book',
+      execute: () => {
+        vi.setSystemTime(Date.now() - 3_600_000);
+        return Promise.resolve('booked');
+      },
+    });
+    try {
+      await registered[0]?.execute({});
+      const tool = (await site.sent())
+        .flatMap((call) => call.events)
+        .find((event) => event.kind === 'agent.tool.executed');
+
+      expect(tool?.end).toBeGreaterThanOrEqual(tool?.start ?? Infinity);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   // Fails if someone reads the page or the markers once the tool has run: a

@@ -10,6 +10,7 @@ import {
   sessionStartOf,
   VERSION,
   type AgentrailEvent,
+  TRACE_HANDOFF_HEADER,
 } from 'agentrail-core';
 import { MARKERS, checkIngestRequest } from 'agentrail-contract';
 import { describe, expect, it, vi } from 'vitest';
@@ -47,6 +48,8 @@ function edgeBefore(
   > & {
     /** What a signed agent's key directory answers; none answers 404. */
     directory?: () => Response;
+    /** The adapter's rewrite of what the origin is sent. */
+    prepareOriginRequest?: EdgeAdapter['prepareOriginRequest'];
   } = {},
   answer: (events: readonly AgentrailEvent[]) => Response = (sent) =>
     Response.json({ accepted: sent.length }),
@@ -55,7 +58,7 @@ function edgeBefore(
   const components: unknown[] = [];
   const events: AgentrailEvent[] = [];
   const work: Promise<unknown>[] = [];
-  const { directory, ...edgeOptions } = options;
+  const { directory, prepareOriginRequest, ...edgeOptions } = options;
   const edge = createEdge({
     collector: {
       endpoint: 'https://collector.example.test',
@@ -97,6 +100,7 @@ function edgeBefore(
       return origin(request);
     },
     instance: 'edge-test',
+    ...(prepareOriginRequest === undefined ? {} : { prepareOriginRequest }),
   };
   async function send(request: Request) {
     try {
@@ -546,6 +550,31 @@ describe('the edge', () => {
     expect(answer.headers.get('set-cookie')).toBeNull();
     expect(await answer.text()).toBe(`[a](https://${DOCS}/page)`);
     expect(forwarded[0]?.headers.get('traceparent')).toBe(caller);
+  });
+
+  // Fails if someone skips the adapter's rewrite for a request left out: a
+  // site that routes through it would send its own servers' calls to the wrong
+  // place, or lets a caller's handoff through, which only this edge may sign.
+  it("applies the site's rewrite to a request it leaves out, and drops a caller's handoff", async () => {
+    const { send, forwarded, events } = edgeBefore(() => new Response('ok'), {
+      ignoreRequest: () => true,
+      prepareOriginRequest: (request) => {
+        const url = new URL(request.url);
+        url.pathname = `/rewritten${url.pathname}`;
+        return new Request(url, request);
+      },
+    });
+    await send(
+      new Request(`https://${DOCS}/llms.txt`, {
+        headers: { [TRACE_HANDOFF_HEADER]: 'forged' },
+      }),
+    );
+
+    expect(events).toEqual([]);
+    expect(new URL(forwarded[0]?.url ?? '').pathname).toBe(
+      '/rewritten/llms.txt',
+    );
+    expect(forwarded[0]?.headers.get(TRACE_HANDOFF_HEADER)).toBeNull();
   });
 
   // Fails if someone drops the check for a caller without the proof: anyone

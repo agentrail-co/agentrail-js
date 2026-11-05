@@ -53,12 +53,17 @@ can send, such as a shared secret: a user agent or an address is what any
 caller can claim.
 
 ```ts
+const internalSecret = process.env.INTERNAL_SECRET;
+if (!internalSecret) throw new Error('INTERNAL_SECRET is not set');
+
 init({
   // ...
   ignoreIncomingRequest: (request) =>
-    request.headers['x-my-internal'] === process.env.INTERNAL_SECRET,
+    request.headers['x-my-internal'] === internalSecret,
 });
 ```
+
+Check the secret is set before `init`. Unset, a request with no such header would match it, and every ordinary request would go unrecorded.
 
 ## Structured logs
 

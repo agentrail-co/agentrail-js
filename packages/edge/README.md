@@ -98,6 +98,8 @@ handoffs and keeps the caller's context as a directional span link.
   own check of its method, URL and headers. It runs after the answer. A
   check that throws is told to `onError` as an `IdentifyError`, and the
   request is recorded without a principal.
+- `ignoreRequest(request)`: requests passed to the origin untouched and
+  recorded nowhere. See [Your own servers](#your-own-servers).
 - `sessionIdleTimeout`: seconds without a request after which a session
   ends; 1800 (30 minutes) by default.
 - `sessionCookieDomain`: the domain a session is shared across, as
@@ -111,6 +113,27 @@ handoffs and keeps the caller's context as a directional span link.
 - `onError(error)`: told of events that could not be sent, and of an
   `identify` that threw; they are logged otherwise. Neither ever reaches the
   visitor.
+
+## Your own servers
+
+Calls your own servers make through this edge are not visitors or agents. A
+page rendered on the server that reads your API would otherwise record a step
+for every read, all from a few addresses at a steady rate, and those steps
+crowd out the journeys you want to see.
+
+Leave them out with something only your servers can send:
+
+```ts
+const edge = createEdge({
+  // ...
+  ignoreRequest: (request) =>
+    request.headers.get('x-my-internal') === env.INTERNAL_SECRET,
+});
+```
+
+A user agent or an address will not do: any caller can claim one, and a caller
+who matched it would never be recorded. Compare a secret in constant time
+where your platform offers it.
 
 ## What it records of the caller
 

@@ -5,6 +5,7 @@
  */
 export {
   IdentifyError,
+  IgnoreRequestError,
   TraceHandoffSigningError,
   cloudflare,
   createEdge,

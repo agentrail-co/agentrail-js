@@ -10,12 +10,14 @@ import {
   sessionStartOf,
   VERSION,
   type AgentrailEvent,
+  TRACE_HANDOFF_HEADER,
 } from 'agentrail-core';
 import { MARKERS, checkIngestRequest } from 'agentrail-contract';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
   IdentifyError,
+  IgnoreRequestError,
   cloudflare,
   createEdge,
   vercel,
@@ -38,10 +40,16 @@ function edgeBefore(
   origin: (request: Request) => Response | Promise<Response>,
   options: Pick<
     EdgeOptions,
-    'identify' | 'sessionIdleTimeout' | 'sessionCookieDomain' | 'onError'
+    | 'identify'
+    | 'ignoreRequest'
+    | 'sessionIdleTimeout'
+    | 'sessionCookieDomain'
+    | 'onError'
   > & {
     /** What a signed agent's key directory answers; none answers 404. */
     directory?: () => Response;
+    /** The adapter's rewrite of what the origin is sent. */
+    prepareOriginRequest?: EdgeAdapter['prepareOriginRequest'];
   } = {},
   answer: (events: readonly AgentrailEvent[]) => Response = (sent) =>
     Response.json({ accepted: sent.length }),
@@ -50,7 +58,7 @@ function edgeBefore(
   const components: unknown[] = [];
   const events: AgentrailEvent[] = [];
   const work: Promise<unknown>[] = [];
-  const { directory, ...edgeOptions } = options;
+  const { directory, prepareOriginRequest, ...edgeOptions } = options;
   const edge = createEdge({
     collector: {
       endpoint: 'https://collector.example.test',
@@ -92,6 +100,7 @@ function edgeBefore(
       return origin(request);
     },
     instance: 'edge-test',
+    ...(prepareOriginRequest === undefined ? {} : { prepareOriginRequest }),
   };
   async function send(request: Request) {
     try {
@@ -513,6 +522,93 @@ describe('the edge', () => {
     expect(events).toHaveLength(1);
     expect(events[0]?.principal).toBeNull();
     expect(errors).toEqual([expect.any(IdentifyError)]);
+    expect(errors[0]?.cause).toBe(failure);
+  });
+
+  // Fails if someone records a request the site left out, sets a session on
+  // it, marks its links or changes its trace: a site's own servers would
+  // still appear as visitors, which is what the option is for.
+  it('passes a request the site leaves out to its origin untouched and records nothing of it', async () => {
+    const { send, forwarded, events } = edgeBefore(
+      () =>
+        new Response(`[a](https://${DOCS}/page)`, {
+          headers: { 'content-type': 'text/markdown' },
+        }),
+      {
+        ignoreRequest: (request) =>
+          request.headers.get('x-internal') === 'secret',
+      },
+    );
+    const caller = '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01';
+    const answer = await send(
+      new Request(`https://${DOCS}/llms.txt`, {
+        headers: { 'x-internal': 'secret', traceparent: caller },
+      }),
+    );
+
+    expect(events).toEqual([]);
+    expect(answer.headers.get('set-cookie')).toBeNull();
+    expect(await answer.text()).toBe(`[a](https://${DOCS}/page)`);
+    expect(forwarded[0]?.headers.get('traceparent')).toBe(caller);
+  });
+
+  // Fails if someone skips the adapter's rewrite for a request left out: a
+  // site that routes through it would send its own servers' calls to the wrong
+  // place, or lets a caller's handoff through, which only this edge may sign.
+  it("applies the site's rewrite to a request it leaves out, and drops a caller's handoff", async () => {
+    const { send, forwarded, events } = edgeBefore(() => new Response('ok'), {
+      ignoreRequest: () => true,
+      prepareOriginRequest: (request) => {
+        const url = new URL(request.url);
+        url.pathname = `/rewritten${url.pathname}`;
+        return new Request(url, request);
+      },
+    });
+    await send(
+      new Request(`https://${DOCS}/llms.txt`, {
+        headers: { [TRACE_HANDOFF_HEADER]: 'forged' },
+      }),
+    );
+
+    expect(events).toEqual([]);
+    expect(new URL(forwarded[0]?.url ?? '').pathname).toBe(
+      '/rewritten/llms.txt',
+    );
+    expect(forwarded[0]?.headers.get(TRACE_HANDOFF_HEADER)).toBeNull();
+  });
+
+  // Fails if someone drops the check for a caller without the proof: anyone
+  // could leave themselves out of the record.
+  it('records a request the check does not leave out', async () => {
+    const { send, events } = edgeBefore(() => new Response('ok'), {
+      ignoreRequest: (request) =>
+        request.headers.get('x-internal') === 'secret',
+    });
+    await send(
+      new Request(`https://${DOCS}/llms.txt`, {
+        headers: { 'x-internal': 'guess' },
+      }),
+    );
+
+    expect(events).toHaveLength(1);
+  });
+
+  // Fails if someone lets a throwing check take the visitor's request down,
+  // lose its event, or hide the site's failure.
+  it("records the request when the site's ignoreRequest throws, and tells onError", async () => {
+    const errors: Error[] = [];
+    const failure = new Error('secret store unreachable');
+    const { send, events } = edgeBefore(() => new Response('ok'), {
+      ignoreRequest: () => {
+        throw failure;
+      },
+      onError: (error) => errors.push(error),
+    });
+    const answer = await send(new Request(`https://${DOCS}/llms.txt`));
+
+    expect(answer.status).toBe(200);
+    expect(events).toHaveLength(1);
+    expect(errors).toEqual([expect.any(IgnoreRequestError)]);
     expect(errors[0]?.cause).toBe(failure);
   });
 

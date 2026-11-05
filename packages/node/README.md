@@ -45,6 +45,26 @@ const result = await agentrail.milestone(
 
 `identify` uses the active managed request, hashes IDs before export and never promotes generic OTel `user.id` or caller-declared attributes into verified identity. Outside a managed request it reports a capture error. Repeated identical assertions do nothing. A different assertion creates a distinct auth milestone while preserving the first principal. Concurrent requests have independent identity state. `milestone(name, context)` records an instant step; its callback overload scopes child spans, preserves the callback's result and rethrows its original error. Milestone names and kinds are bounded to 256 characters and should be stable operation names, without arguments or identifiers.
 
+## Your own servers
+
+Calls your own services make to this one are not visitors or agents. Leave
+them out with `ignoreIncomingRequest`, and check something only your servers
+can send, such as a shared secret: a user agent or an address is what any
+caller can claim.
+
+```ts
+const internalSecret = process.env.INTERNAL_SECRET;
+if (!internalSecret) throw new Error('INTERNAL_SECRET is not set');
+
+init({
+  // ...
+  ignoreIncomingRequest: (request) =>
+    request.headers['x-my-internal'] === internalSecret,
+});
+```
+
+Check the secret is set before `init`. Unset, a request with no such header would match it, and every ordinary request would go unrecorded.
+
 ## Structured logs
 
 ```ts

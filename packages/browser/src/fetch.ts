@@ -54,7 +54,8 @@ function callEvent(
   return browserEvent(context.recorder, {
     kind: BROWSER_EVENT_KINDS.fetch,
     start: call.start,
-    end: context.now(),
+    // The page's clock follows the device's, which can be set back mid-call.
+    end: Math.max(call.start, context.now()),
     span: call.span,
     parentSpanId: call.parentSpanId,
     spanKind: 'client',

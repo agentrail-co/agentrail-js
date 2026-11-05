@@ -7,6 +7,8 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 
 import { BrowserAlreadyStartedError, start } from '../src/index.js';
+import { nowOf } from '../src/session.js';
+import type { Page } from '../src/wire.js';
 import { API, COLLECTOR, KEY, onPage } from './support/page.js';
 
 const SESSION = newSessionId(Date.now());
@@ -15,6 +17,43 @@ const SESSION = newSessionId(Date.now());
 async function eventsOf(site: ReturnType<typeof onPage>) {
   return (await site.sent()).flatMap((call) => call.events);
 }
+
+describe("the page's clock", () => {
+  // Fails if someone puts event times back on `timeOrigin + performance.now()`:
+  // it stops while a device sleeps, so a tab left open stamps its events hours
+  // in the past, and a linking run reopens every journey back to them.
+  it('stays on the wall clock when the performance clock stopped while the device slept', () => {
+    vi.useFakeTimers({ now: 1_800_000_000_000 });
+    try {
+      let elapsed = 5_000;
+      const now = nowOf({ performance: { now: () => elapsed } } as Page);
+      expect(now()).toBe(1_800_000_000_000);
+
+      vi.setSystemTime(1_800_000_000_000 + 3_600_000);
+      elapsed += 20;
+
+      expect(Math.abs(now() - Date.now())).toBeLessThan(1_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Fails if someone reads the clock from `Date.now()` alone: whole
+  // milliseconds would flatten the timing the behaviour features read.
+  it('keeps the finer time between two readings', () => {
+    vi.useFakeTimers({ now: 1_800_000_000_000 });
+    try {
+      let elapsed = 100.25;
+      const now = nowOf({ performance: { now: () => elapsed } } as Page);
+      const first = now();
+      elapsed = 100.75;
+
+      expect(now() - first).toBeCloseTo(0.5, 6);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe('the browser script', () => {
   // Fails if someone records the page's whole query (a token in it would
@@ -298,6 +337,26 @@ describe("the page's calls", () => {
       });
     } finally {
       base.remove();
+    }
+  });
+
+  // Fails if someone takes a call's end from the clock alone: the page's clock
+  // follows the device's, and a device set back during a call would record a
+  // call that ended before it began.
+  it('never records a call ending before it began when the device clock moves back', async () => {
+    const site = onPage({ behaviour: false, fingerprint: false }, (url) => {
+      if (url.endsWith('/v1/slow')) vi.setSystemTime(Date.now() - 3_600_000);
+      return new Response('{}', { status: 200 });
+    });
+    try {
+      await window.fetch('/v1/slow');
+      const call = (await eventsOf(site)).find(
+        (event) => event.kind === 'http.client',
+      );
+
+      expect(call?.end).toBeGreaterThanOrEqual(call?.start ?? Infinity);
+    } finally {
+      vi.useRealTimers();
     }
   });
 

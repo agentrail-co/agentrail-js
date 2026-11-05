@@ -90,8 +90,25 @@ export function doneOnTab(
   };
 }
 
-/** The page's clock, milliseconds since the epoch, finer than a millisecond. */
+/** How far the page's clock may stand from the wall clock before it is set again. */
+const CLOCK_DRIFT_MS = 1_000;
+
+/**
+ * The page's clock, milliseconds since the epoch, finer than a millisecond.
+ * `performance.now()` gives the fine, ordered times the behaviour features
+ * read, but it stops while a device sleeps: on `timeOrigin` alone, a tab left
+ * open overnight stamps its events hours in the past, which a linking run
+ * reads as work from hours ago. So it is held to the wall clock, and set
+ * again whenever the two part.
+ */
 export function nowOf(window: Page): () => number {
   const { performance } = window;
-  return () => performance.timeOrigin + performance.now();
+  let origin = Date.now() - performance.now();
+  return () => {
+    const elapsed = performance.now();
+    const wall = Date.now();
+    if (Math.abs(wall - (origin + elapsed)) > CLOCK_DRIFT_MS)
+      origin = wall - elapsed;
+    return origin + elapsed;
+  };
 }

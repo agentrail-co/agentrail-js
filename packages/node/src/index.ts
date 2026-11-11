@@ -10,6 +10,9 @@ export {
   type NodeOptions,
   type VerifiedIdentity,
   type MilestoneContext,
+  type PerformanceContext,
+  type AuthorizedOperation,
+  type PluginInvocation,
   type QueueOptions,
 } from './options.js';
 export type { AgentrailNode } from './client.js';

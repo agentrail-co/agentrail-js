@@ -175,3 +175,55 @@ server.registerTool('checkout', {}, capture.tool('checkout', checkout));
 The optional adapter targets `@modelcontextprotocol/server` 2.3.1 and public registration callbacks, without modifying private handlers or transports. Use a callback typed with the SDK's schema, for example `ToolCallback<typeof inputSchema>`, for typed tool arguments. With HTTP capture installed, each execution becomes a nested MCP step with a distinct span, exact log correlation and inherited application-verified identity. Outside an HTTP request, it starts its own managed operation. It captures the registered operation name, method, client name/version, protocol and error outcome; arguments, result text, resource URIs and prompt content stay off. Pass a stable registered resource name rather than the caller's URI.
 
 MCP 2026-07-28 metadata comes from the request's public context envelope. Legacy 2025-11-25 HTTP calls retain protocol metadata; a stateless server may have no client name after its discarded initialize request. The adapter keeps no initialize cache across callers. Client info and supplied trace metadata remain untrusted and cannot assert a principal. `isError` results mark the operation as failed while preserving the original result. Thrown application errors retain their original identity. Tests exercise modern tool/resource/prompt requests and the official client's legacy HTTP exchange; other MCP SDK versions/transports have not been verified in this release.
+
+## Explicit workflow and plugin evidence
+
+After the application authenticates and authorizes a business operation, pass its
+operation-instance reference to `milestone`. Use a different reference for each
+new business attempt, and the same reference for its start, progress, plugin
+invocations and backend outcome across services. Services must share the workspace
+hash key and operation namespace. Source permissions are configured in Agentrail.
+
+```ts
+agentrail.milestone('delivery.requested', {
+  surface: 'custom',
+  kind: 'business.event',
+  performance: {
+    environment: 'production',
+    operation: {
+      namespaceId: configuredNamespaceId,
+      instanceRef: authorizedDeliveryAttempt.id,
+      role: 'start',
+    },
+    eventName: 'delivery.requested',
+    plugin: {
+      bindingId: configuredBindingId,
+      invocationId: opaqueInvocationId,
+    },
+  },
+});
+```
+
+Emit a separate milestone with role `terminal` and the configured success event
+only after the backend verifies completion. A returned tool result or HTTP 200
+is not business completion. The MCP adapter does not infer operation references
+from arguments or automatically declare a result successful.
+
+The operation reference is HMAC-SHA256 hashed before entering telemetry context;
+the full digest is exported. The input is the UTF-8 JSON encoding of
+`["agentrail.operation", namespaceId, instanceRef]`, with the workspace hash key
+as the HMAC key. This domain separation prevents principal hashes or other
+namespaces from becoming operation references. The SDK exports the hash-key ID
+alongside the hash, never the key or raw operation reference. Do not place raw
+references in milestone names, invocation IDs, or log fields.
+
+For an invocation without an authorized operation, supply only `environment` and
+`plugin`. It remains visible as plugin activity without workflow-outcome credit.
+The SDK never propagates this assertion to unrelated child spans and never reads
+arguments, results or a host conversation ID to invent it. Production and test
+are separate. A binding identifies an authenticated server deployment; it does
+not establish which package version a ChatGPT or Claude host installed.
+
+This hook requires a collector that accepts explicit plugin/workflow attributes.
+Upgrade the collector before enabling the hook. Existing capture is unchanged
+when `performance` is omitted. No package is published by this change alone.

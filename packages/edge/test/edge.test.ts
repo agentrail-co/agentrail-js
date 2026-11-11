@@ -50,6 +50,7 @@ function edgeBefore(
     directory?: () => Response;
     /** The adapter's rewrite of what the origin is sent. */
     prepareOriginRequest?: EdgeAdapter['prepareOriginRequest'];
+    signals?: EdgeAdapter['signals'];
   } = {},
   answer: (events: readonly AgentrailEvent[]) => Response = (sent) =>
     Response.json({ accepted: sent.length }),
@@ -58,7 +59,7 @@ function edgeBefore(
   const components: unknown[] = [];
   const events: AgentrailEvent[] = [];
   const work: Promise<unknown>[] = [];
-  const { directory, prepareOriginRequest, ...edgeOptions } = options;
+  const { directory, prepareOriginRequest, signals, ...edgeOptions } = options;
   const edge = createEdge({
     collector: {
       endpoint: 'https://collector.example.test',
@@ -100,6 +101,7 @@ function edgeBefore(
       return origin(request);
     },
     instance: 'edge-test',
+    ...(signals === undefined ? {} : { signals }),
     ...(prepareOriginRequest === undefined ? {} : { prepareOriginRequest }),
   };
   async function send(request: Request) {
@@ -679,6 +681,31 @@ describe('the edge', () => {
 });
 
 describe('the platform adapters', () => {
+  // Fails if custom adapter place names bypass the collector's bounds.
+  it('normalizes empty and oversized custom locations before export', async () => {
+    for (const places of [
+      { city: '', region: 'R'.repeat(129) },
+      { city: 'C'.repeat(129), region: '' },
+    ]) {
+      const { send, events } = edgeBefore(() => new Response('ok'), {
+        signals: () => ({
+          country: 'US',
+          asn: null,
+          ja4: null,
+          verifiedBot: null,
+          ...places,
+        }),
+      });
+      await send(new Request(`https://${DOCS}/location`));
+      expect(events).toHaveLength(1);
+      expect(events[0]?.actor.location).toMatchObject({
+        country: 'US',
+        source: 'source',
+        city: places.city === '' ? null : 'C'.repeat(128),
+        region: places.region === '' ? null : 'R'.repeat(128),
+      });
+    }
+  });
   // Fails if someone reads an address the client writes itself where the
   // platform states the real one.
   it("take the client's address from where each platform puts it, and its waitUntil", () => {
@@ -766,6 +793,8 @@ describe('the platform adapters', () => {
       cf: {
         asn: 13335,
         country: 'US',
+        city: 'Austin',
+        region: 'Texas',
         botManagement: { ja4: 't13d1516h2_8daaf6152771_02713d6af862' },
         verifiedBotCategory: 'AI Assistant',
       },
@@ -773,12 +802,33 @@ describe('the platform adapters', () => {
     expect(worker.signals?.(seen)).toEqual({
       asn: 13335,
       country: 'US',
+      city: 'Austin',
+      region: 'Texas',
+      source: 'cloudflare',
       ja4: 't13d1516h2_8daaf6152771_02713d6af862',
       verifiedBot: { category: 'AI Assistant', name: null },
+    });
+    // Fails if platform location stops reaching the exported, contract-checked event.
+    const located = edgeBefore(() => new Response('ok'), {
+      signals: worker.signals?.bind(worker),
+    });
+    await located.send(seen);
+    const locatedEvent = located.events[0];
+    if (locatedEvent === undefined)
+      throw new Error('No located event was exported');
+    expect(locatedEvent.actor.location).toMatchObject({
+      country: 'US',
+      region: 'Texas',
+      city: 'Austin',
+      source: 'cloudflare',
+      observedAt: new Date(locatedEvent.start).toISOString(),
     });
     expect(worker.signals?.(new Request(url))).toEqual({
       asn: null,
       country: null,
+      city: null,
+      region: null,
+      source: 'cloudflare',
       ja4: null,
       verifiedBot: null,
     });
@@ -791,10 +841,20 @@ describe('the platform adapters', () => {
         new Request(url, {
           headers: {
             'x-vercel-ip-country': 'DE',
+            'x-vercel-ip-city': 'M%C3%BCnchen',
+            'x-vercel-ip-country-region': 'BY',
             'x-vercel-ja4-digest': 't13d',
           },
         }),
       ),
-    ).toEqual({ asn: null, country: 'DE', ja4: 't13d', verifiedBot: null });
+    ).toEqual({
+      asn: null,
+      country: 'DE',
+      ja4: 't13d',
+      verifiedBot: null,
+      city: 'München',
+      region: 'BY',
+      source: 'vercel',
+    });
   });
 });

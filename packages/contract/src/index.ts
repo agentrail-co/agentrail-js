@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { Ajv2020, type ValidateFunction } from 'ajv/dist/2020.js';
+import { fullFormats } from 'ajv-formats/dist/formats.js';
 
 /**
  * What the Argus collector takes and how its engine reads a marker, from
@@ -111,6 +112,7 @@ export const OTLP = contract.otlp;
 
 // Strict: a schema JSON Schema forbids is refused here, not read loosely.
 const ajv = new Ajv2020({ allErrors: true, strict: true });
+ajv.addFormat('date-time', fullFormats['date-time']);
 
 /** A body the collector would refuse. */
 export class ContractViolationError extends Error {

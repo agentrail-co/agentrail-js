@@ -1,6 +1,6 @@
 {
   "name": "agentrail-node",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Backend HTTP traces, structured logs and MCP journey context for Agentrail.",
   "license": "Apache-2.0",
   "repository": {

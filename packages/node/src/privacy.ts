@@ -97,6 +97,14 @@ export function copySpan(
     span.kind === SpanKind.CONSUMER;
   if (entry)
     Object.assign(attrs, metadata.mark?.identity ?? metadata.state.identity);
+  if (entry && metadata.state.location) {
+    const location = metadata.state.location;
+    for (const field of ['country', 'region', 'city', 'source'] as const) {
+      const value = location[field];
+      if (value !== null)
+        attrs[`agentrail.client.location.${field}`] = boundedText(value, 128);
+    }
+  }
   if (span.kind === SpanKind.SERVER)
     attrs['agentrail.ingress.verified'] = metadata.state.verifiedIngress;
   if (metadata.mark !== undefined)

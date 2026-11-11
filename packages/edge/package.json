@@ -1,6 +1,6 @@
 {
   "name": "agentrail-edge",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "The Agentrail edge: in front of a site on Cloudflare Workers, Vercel or any Fetch API runtime, it records each request and marks the links agents follow.",
   "license": "Apache-2.0",
   "repository": {

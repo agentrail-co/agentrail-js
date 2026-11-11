@@ -6,6 +6,8 @@ is captured per request; raw addresses are never exported. A location describes
 the network exit, which may be a VPN, proxy or hosted agent. Missing platform
 data remains null. Custom adapters can supply `signals.city`, `signals.region`
 and `signals.source` together with `signals.country`; only use trusted metadata.
+Empty city and region values become null; longer values are shortened to the
+collector's 128-character limit before export, including for custom adapters.
 
 The Agentrail edge, in front of a site on the Fetch API: Cloudflare Workers,
 Vercel Routing Middleware, or anything else that speaks it. Each request is

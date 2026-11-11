@@ -62,18 +62,22 @@ describe('standalone HTTP/fetch installation', () => {
       response.end('external');
     });
     const blockedOrigin = await listen(blocked);
+    const reusedLocation = {
+      country: 'US',
+      region: null,
+      city: 'Seattle',
+      source: 'source' as const,
+    };
+    const conflictStarted = Promise.withResolvers<undefined>();
     const configuration = {
       ...options(sink.endpoint),
       outboundOrigins: [destination],
       incomingLocation: (request: import('node:http').IncomingMessage) => {
         if (request.url === '/tampered')
           throw new TypeError('Location lookup failed');
-        return {
-          country: 'US',
-          region: null,
-          city: request.url === '/second' ? 'Boston' : 'Seattle',
-          source: 'source' as const,
-        };
+        reusedLocation.city = request.url === '/second' ? 'Boston' : 'Seattle';
+        if (request.url === '/conflict') conflictStarted.resolve(undefined);
+        return reusedLocation;
       },
       ignoreIncomingRequest: (request: import('node:http').IncomingMessage) =>
         request.url === '/health',
@@ -95,6 +99,9 @@ describe('standalone HTTP/fetch installation', () => {
     );
     const server = createServer((request, response) => {
       void (async () => {
+        // The second request ends only after another callback has reused and
+        // mutated the location object. Fails if the hook retains its reference.
+        if (request.url === '/second') await conflictStarted.promise;
         const id = request.url?.startsWith('/second')
           ? 'second-agent'
           : 'first-agent';

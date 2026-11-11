@@ -524,8 +524,8 @@ export function createEdge(options: EdgeOptions): Edge {
             ? null
             : {
                 country: signals.country,
-                city: signals.city ?? null,
-                region: signals.region ?? null,
+                city: cut(signals.city, 128),
+                region: cut(signals.region, 128),
                 source: signals.source ?? 'source',
                 observedAt: new Date(input.start).toISOString(),
               },

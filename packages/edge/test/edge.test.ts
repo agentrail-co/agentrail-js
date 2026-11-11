@@ -681,6 +681,31 @@ describe('the edge', () => {
 });
 
 describe('the platform adapters', () => {
+  // Fails if custom adapter place names bypass the collector's bounds.
+  it('normalizes empty and oversized custom locations before export', async () => {
+    for (const places of [
+      { city: '', region: 'R'.repeat(129) },
+      { city: 'C'.repeat(129), region: '' },
+    ]) {
+      const { send, events } = edgeBefore(() => new Response('ok'), {
+        signals: () => ({
+          country: 'US',
+          asn: null,
+          ja4: null,
+          verifiedBot: null,
+          ...places,
+        }),
+      });
+      await send(new Request(`https://${DOCS}/location`));
+      expect(events).toHaveLength(1);
+      expect(events[0]?.actor.location).toMatchObject({
+        country: 'US',
+        source: 'source',
+        city: places.city === '' ? null : 'C'.repeat(128),
+        region: places.region === '' ? null : 'R'.repeat(128),
+      });
+    }
+  });
   // Fails if someone reads an address the client writes itself where the
   // platform states the real one.
   it("take the client's address from where each platform puts it, and its waitUntil", () => {

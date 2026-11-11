@@ -73,6 +73,8 @@ synchronously for each captured incoming HTTP request. Return
 or return null when the address has no location. Country is a two-letter
 uppercase code; region and city are at most 128 characters. Source is
 `cloudflare`, `vercel`, `dbip` or `source` for another trusted provider.
+The hook's four values are copied when the request arrives, so reusing or
+changing the returned object cannot alter an earlier request's location.
 
 Use trusted platform metadata or a local database loaded before `init`.
 Resolve the original client address according to your application's proxy

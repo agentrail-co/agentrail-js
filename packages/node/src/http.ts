@@ -144,6 +144,20 @@ export function httpCapture(runtime: Runtime) {
           );
       }
       requests.set(request.headers, ctx.setValue(runtime.stateKey, state));
+      try {
+        state.location =
+          runtime.options.input.incomingLocation?.(request) ?? null;
+      } catch (error) {
+        // Application-provided enrichment must not replace its HTTP response.
+        runtime.options.report(
+          new CaptureError(
+            'location_failed',
+            'context',
+            1,
+            error instanceof Error ? error : new Error(String(error)),
+          ),
+        );
+      }
       return {};
     },
     startOutgoingSpanHook(request) {

@@ -1,6 +1,6 @@
 import { reportWithoutCapture } from './suppression.js';
 import { randomUUID } from 'node:crypto';
-import type { PrincipalKind, Surface } from 'agentrail-core';
+import type { PrincipalKind, Surface, IpLocation } from 'agentrail-core';
 
 export interface VerifiedIdentity {
   readonly kind: PrincipalKind;
@@ -38,6 +38,10 @@ export interface NodeOptions {
   readonly ignoreIncomingRequest?: (
     request: import('node:http').IncomingMessage,
   ) => boolean;
+  /** Use trusted platform metadata or a preloaded local database; never the exporter connection's IP. */
+  readonly incomingLocation?: (
+    request: import('node:http').IncomingMessage,
+  ) => Omit<IpLocation, 'observedAt'> | null;
   readonly logs?: {
     readonly includeFields?: readonly string[];
     readonly uncorrelated?: boolean;
@@ -52,6 +56,7 @@ export type CaptureCode =
   | 'closed'
   | 'handoff_refused'
   | 'entry_not_recording'
+  | 'location_failed'
   | 'identity_outside_request';
 export class CaptureError extends Error {
   override readonly name = 'AgentrailCaptureError';

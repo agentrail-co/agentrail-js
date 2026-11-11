@@ -53,6 +53,15 @@ export interface SpanContext {
   readonly spanId: string;
 }
 
+/** Approximate network location, resolved before the client address is hashed. */
+export interface IpLocation {
+  readonly country: string | null;
+  readonly region: string | null;
+  readonly city: string | null;
+  readonly source: 'dbip' | 'cloudflare' | 'vercel' | 'source';
+  readonly observedAt: string;
+}
+
 export interface AgentrailEvent {
   /** Bumped when a field's meaning changes; stored events are read back. */
   readonly schemaVersion: 1;
@@ -108,6 +117,7 @@ export interface AgentrailEvent {
   readonly actor: {
     /** Keyed hash of the client address. */
     readonly egress: string | null;
+    readonly location?: IpLocation | null | undefined;
     readonly userAgent: string | null;
     /** MCP `clientInfo` name, or another client self-description. */
     readonly client: string | null;

@@ -7,6 +7,7 @@
 export {
   SURFACES,
   type AgentrailEvent,
+  type IpLocation,
   type ClockSource,
   type Component,
   type PrincipalKind,

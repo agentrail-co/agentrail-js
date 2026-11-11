@@ -65,6 +65,26 @@ init({
 
 Check the secret is set before `init`. Unset, a request with no such header would match it, and every ordinary request would go unrecorded.
 
+## Approximate IP location
+
+To attach a location, supply `incomingLocation(request)` at startup. It runs
+synchronously for each captured incoming HTTP request. Return
+`{ country, region, city, source }`, with null for unavailable place fields,
+or return null when the address has no location. Country is a two-letter
+uppercase code; region and city are at most 128 characters. Source is
+`cloudflare`, `vercel`, `dbip` or `source` for another trusted provider.
+
+Use trusted platform metadata or a local database loaded before `init`.
+Resolve the original client address according to your application's proxy
+configuration; never trust an arbitrary forwarded header. Skip private and
+reserved addresses. A thrown lookup error is reported to `onError` as
+`location_failed`; the request continues without a location. No network
+request should run in this hook. The SDK exports the location on managed entry
+spans without the address, and the collector adds the observation time from
+the entry span. The exporter connection's address is not the visitor's.
+Without this hook, the SDK supplies no location. City-level results are
+approximate and can describe a VPN or hosting provider instead of the user.
+
 ## Structured logs
 
 ```ts

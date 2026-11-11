@@ -10,6 +10,7 @@ import type {
 } from './options.js';
 
 export interface State {
+  location?: Omit<import('agentrail-core').IpLocation, 'observedAt'> | null;
   identity?: Attributes;
   readonly verifiedIngress: boolean;
   readonly links: import('@opentelemetry/api').Link[];

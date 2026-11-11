@@ -157,6 +157,9 @@ export interface EdgeOptions {
  * it tells anything: features for the collector's classifier, never keys.
  */
 export interface PlatformSignals {
+  readonly city?: string | null;
+  readonly region?: string | null;
+  readonly source?: 'cloudflare' | 'vercel' | 'source';
   /** The client's autonomous system number. */
   readonly asn: number | null;
   /** The client's country, two letters. */
@@ -515,6 +518,17 @@ export function createEdge(options: EdgeOptions): Edge {
         linksOut: [...observed.linksOut],
       },
       actor: {
+        location:
+          signals === null ||
+          (signals.country === null && !signals.city && !signals.region)
+            ? null
+            : {
+                country: signals.country,
+                city: signals.city ?? null,
+                region: signals.region ?? null,
+                source: signals.source ?? 'source',
+                observedAt: new Date(input.start).toISOString(),
+              },
         egress:
           input.address === null
             ? null
@@ -739,6 +753,16 @@ function fetchMetadataOf(
 }
 
 /** A two-letter country, as the platforms give one; anything else is none. */
+function decodedCity(value: string | null): string | null {
+  if (value === null) return null;
+  try {
+    return cut(decodeURIComponent(value), 128);
+  } catch (error) {
+    if (error instanceof URIError) return null;
+    throw error;
+  }
+}
+
 function countryOf(value: unknown): string | null {
   return typeof value === 'string' && /^[A-Z]{2}$/u.test(value) ? value : null;
 }
@@ -765,6 +789,9 @@ function cloudflareSignals(request: Request): PlatformSignals {
   return {
     asn: typeof cf?.asn === 'number' ? cf.asn : null,
     country: countryOf(cf?.country),
+    city: typeof cf?.city === 'string' ? cut(cf.city, 128) : null,
+    region: typeof cf?.region === 'string' ? cut(cf.region, 128) : null,
+    source: 'cloudflare',
     ja4: typeof bot?.ja4 === 'string' ? bot.ja4 : null,
     verifiedBot: category === null ? null : { category, name: null },
   };
@@ -807,6 +834,9 @@ export function vercel(options: {
     signals: (request) => ({
       asn: null,
       country: countryOf(request.headers.get('x-vercel-ip-country')),
+      city: decodedCity(request.headers.get('x-vercel-ip-city')),
+      region: cut(request.headers.get('x-vercel-ip-country-region'), 128),
+      source: 'vercel',
       ja4: request.headers.get('x-vercel-ja4-digest'),
       verifiedBot: null,
     }),

@@ -65,6 +65,16 @@ describe('standalone HTTP/fetch installation', () => {
     const configuration = {
       ...options(sink.endpoint),
       outboundOrigins: [destination],
+      incomingLocation: (request: import('node:http').IncomingMessage) => {
+        if (request.url === '/tampered')
+          throw new TypeError('Location lookup failed');
+        return {
+          country: 'US',
+          region: null,
+          city: request.url === '/second' ? 'Boston' : 'Seattle',
+          source: 'source' as const,
+        };
+      },
       ignoreIncomingRequest: (request: import('node:http').IncomingMessage) =>
         request.url === '/health',
       onError: (error: Error) => {
@@ -201,6 +211,12 @@ describe('standalone HTTP/fetch installation', () => {
           attributesOf(span.attributes)['url.full'] === `${origin}/second`,
       );
       expect(
+        attributesOf(first?.attributes)['agentrail.client.location.city'],
+      ).toBe('Seattle');
+      expect(
+        attributesOf(second?.attributes)['agentrail.client.location.city'],
+      ).toBe('Boston');
+      expect(
         attributesOf(first?.attributes)['agentrail.principal.id_hash'],
       ).not.toBe(
         attributesOf(second?.attributes)['agentrail.principal.id_hash'],
@@ -234,7 +250,10 @@ describe('standalone HTTP/fetch installation', () => {
       expect(blockedHeaders[0]?.traceparent).toBeUndefined();
       expect(blockedHeaders[0]?.[TRACE_HANDOFF_HEADER]).toBeUndefined();
       expect(blockedHeaders[0]?.baggage).toBeUndefined();
-      expect(failures).toHaveLength(1);
+      expect(failures).toHaveLength(2);
+      expect(failures).toContainEqual(
+        expect.objectContaining({ code: 'location_failed' }),
+      );
       expect(
         JSON.stringify(sink.packets.map((packet) => packet.bytes.toString())),
       ).not.toContain('SYNTHETIC_PRIVATE_MESSAGE');

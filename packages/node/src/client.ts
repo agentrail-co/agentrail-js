@@ -68,10 +68,20 @@ export function createClient(
         'Milestone name and kind must contain 1–256 characters.',
       );
     const { performance, ...metadata } = details;
-    const normalized =
-      performance === undefined
-        ? undefined
-        : performanceAttributes(performance, runtime.options.input.hashKey);
+    let normalized;
+    if (performance !== undefined) {
+      try {
+        normalized = performanceAttributes(
+          performance,
+          runtime.options.input.hashKey,
+        );
+      } catch (error) {
+        if (!(error instanceof ConfigurationError)) throw error;
+        runtime.options.report(
+          new CaptureError('invalid_performance', 'context', 1, error),
+        );
+      }
+    }
     const base = parent();
     const marked = base.setValue(runtime.markKey, {
       ...metadata,

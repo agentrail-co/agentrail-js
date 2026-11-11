@@ -9,7 +9,7 @@ import { attributesOf, collector } from './support/collector.js';
 import { options, HASH_KEY } from './support/options.js';
 const namespaceId = '11111111-1111-4111-8111-111111111111';
 const bindingId = '22222222-2222-4222-8222-222222222222';
-const privateRef = 'synthetic-private-operation-attempt';
+const privateRef = 'synthetic-private-operation-attempt\u0000';
 
 // Fails if operation IDs leave the process unhashed, lose namespace isolation,
 // inherit from unrelated spans, or silently turn an invocation into an outcome.
@@ -131,6 +131,102 @@ it('exports explicit authorized operation evidence over OTLP without raw referen
           .slice(0, 16),
       }),
     );
+  } finally {
+    await sdk.client.shutdown();
+    await provider.shutdown();
+    manager.disable();
+    context.disable();
+    trace.disable();
+    await sink.close();
+  }
+});
+
+// This test fails if invalid per-call evidence is exported or prevents the customer's operation.
+it('reports invalid evidence while preserving customer execution and unrelated OTLP spans', async () => {
+  const sink = await collector();
+  const errors: import('../src/options.js').CaptureError[] = [];
+  const sdk = createProcessors({
+    ...options(sink.endpoint),
+    onError: (error) => errors.push(error),
+  });
+  const provider = new TracerProvider({ spanProcessors: [sdk.spanProcessor] });
+  const manager = new AsyncLocalStorageContextManager().enable();
+  context.setGlobalContextManager(manager);
+  trace.setGlobalTracerProvider(provider);
+  const invalid: PerformanceContext[] = [
+    {
+      environment: 'production',
+      plugin: {
+        bindingId: 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA',
+        invocationId: 'opaque',
+      },
+    },
+    {
+      environment: 'production',
+      plugin: {
+        bindingId: '00000000-0000-0000-0000-000000000000',
+        invocationId: 'opaque',
+      },
+    },
+    {
+      environment: 'production',
+      plugin: {
+        bindingId: '22222222-2222-9222-8222-222222222222',
+        invocationId: 'opaque',
+      },
+    },
+    {
+      environment: 'production',
+      operation: {
+        namespaceId: '11111111-1111-4111-7111-111111111111',
+        instanceRef: 'authorized',
+        role: 'start',
+      },
+      eventName: 'delivery.requested',
+    },
+    {
+      environment: 'production',
+      plugin: { bindingId, invocationId: 'x'.repeat(257) },
+    },
+    {
+      environment: 'production',
+      operation: { namespaceId, instanceRef: 'authorized', role: 'start' },
+      eventName: 'invalid event',
+    },
+  ];
+  try {
+    for (const [i, performance] of invalid.entries()) {
+      expect(
+        await sdk.client.milestone(
+          `invalid.${i}`,
+          { surface: 'custom', kind: 'business.event', performance },
+          () => `customer-result-${i}`,
+        ),
+      ).toBe(`customer-result-${i}`);
+    }
+    sdk.client.milestone('unrelated', {
+      surface: 'custom',
+      kind: 'business.event',
+    });
+    await sdk.client.flush();
+    expect(errors.map((error) => error.code)).toEqual(
+      invalid.map(() => 'invalid_performance'),
+    );
+    const spans = sink.spans();
+    expect(spans.map((span) => span.name)).toContain('unrelated');
+    for (const [i] of invalid.entries()) {
+      const span = spans.find((item) => item.name === `invalid.${i}`);
+      expect(span).toBeDefined();
+      const attributes = attributesOf(span?.attributes);
+      for (const prefix of [
+        'agentrail.operation.',
+        'agentrail.workflow.',
+        'agentrail.plugin.',
+      ])
+        expect(
+          Object.keys(attributes).filter((key) => key.startsWith(prefix)),
+        ).toEqual([]);
+    }
   } finally {
     await sdk.client.shutdown();
     await provider.shutdown();

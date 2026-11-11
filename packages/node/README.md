@@ -227,3 +227,5 @@ not establish which package version a ChatGPT or Claude host installed.
 This hook requires a collector that accepts explicit plugin/workflow attributes.
 Upgrade the collector before enabling the hook. Existing capture is unchanged
 when `performance` is omitted. No package is published by this change alone.
+
+Invalid per-call performance evidence is omitted and reported through `onError` as `invalid_performance`; the milestone and customer callback still run. Namespace and binding IDs must match the collector UUID contract. Use an opaque invocation ID, such as `crypto.randomUUID()`, never tool arguments or a customer identifier. Operation references are hashed locally, including any valid Unicode or NUL characters; they are never exported.

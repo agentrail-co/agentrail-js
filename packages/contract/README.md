@@ -22,7 +22,7 @@ Argus writes it (`apps/api/sdk-contract.json`, kept current by
 `apps/api/test/sdk-contract.test.ts`). It is copied here byte for byte and
 never edited here.
 
-Copied from argus commit `497bca640e49fa5f91df6aaa8510a7c28322d6ad`.
+Copied from argus commit `2074d586322c0d6097a840b392aa75e846f9eeb8`.
 
 To take a newer one: copy argus's `apps/api/sdk-contract.json` over this
 file, change the commit above, and run `pnpm test`. A test that fails then

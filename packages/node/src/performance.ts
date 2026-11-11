@@ -1,7 +1,9 @@
 import { createHmac } from 'node:crypto';
 import type { Attributes } from '@opentelemetry/api';
 import { ConfigurationError, type PerformanceContext } from './options.js';
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
+// Matches the collector's UUID contract, including version and variant.
+const uuid =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 /** Only normalized, allowlisted evidence enters the span context. */
 export function performanceAttributes(
   input: PerformanceContext,
@@ -27,8 +29,7 @@ export function performanceAttributes(
     if (
       !uuid.test(namespaceId) ||
       instanceRef.length === 0 ||
-      !instanceRef.isWellFormed() ||
-      instanceRef.includes('\u0000')
+      !instanceRef.isWellFormed()
     )
       throw new ConfigurationError(
         'Use a canonical namespace ID and a nonempty, well-formed authorized operation reference.',

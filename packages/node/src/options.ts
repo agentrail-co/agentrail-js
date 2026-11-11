@@ -89,7 +89,8 @@ export type CaptureCode =
   | 'handoff_refused'
   | 'entry_not_recording'
   | 'location_failed'
-  | 'identity_outside_request';
+  | 'identity_outside_request'
+  | 'invalid_performance';
 export class CaptureError extends Error {
   override readonly name = 'AgentrailCaptureError';
   constructor(

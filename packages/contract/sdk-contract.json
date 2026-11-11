@@ -927,17 +927,10 @@
                       ]
                     },
                     "eventName": {
-                      "anyOf": [
-                        {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 120,
-                          "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]*$"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 120,
+                      "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]*$"
                     },
                     "plugin": {
                       "anyOf": [
@@ -964,6 +957,65 @@
                           "type": "null"
                         }
                       ]
+                    }
+                  },
+                  "required": [
+                    "namespaceId",
+                    "operationHash",
+                    "environment",
+                    "role",
+                    "eventName",
+                    "plugin"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "namespaceId": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                    },
+                    "operationHash": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "environment": {
+                      "type": "string",
+                      "enum": [
+                        "production",
+                        "test"
+                      ]
+                    },
+                    "role": {
+                      "type": "string",
+                      "enum": [
+                        "start",
+                        "progress",
+                        "terminal"
+                      ]
+                    },
+                    "eventName": {
+                      "type": "null"
+                    },
+                    "plugin": {
+                      "type": "object",
+                      "properties": {
+                        "bindingId": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                        },
+                        "invocationId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "required": [
+                        "bindingId",
+                        "invocationId"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [

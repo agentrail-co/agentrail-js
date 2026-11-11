@@ -9,7 +9,8 @@ import { attributesOf, collector } from './support/collector.js';
 import { options, HASH_KEY } from './support/options.js';
 const namespaceId = '11111111-1111-4111-8111-111111111111';
 const bindingId = '22222222-2222-4222-8222-222222222222';
-const privateRef = 'synthetic-private-operation-attempt\u0000';
+const privateCanary = 'synthetic-private-operation-attempt';
+const privateRef = `${privateCanary}\u0000`;
 
 // Fails if operation IDs leave the process unhashed, lose namespace isolation,
 // inherit from unrelated spans, or silently turn an invocation into an outcome.
@@ -122,7 +123,7 @@ it('exports explicit authorized operation evidence over OTLP without raw referen
         spans.find((span) => span.name === 'backend.operation')?.attributes,
       ),
     ).not.toHaveProperty(['agentrail.operation.hash']);
-    expect(JSON.stringify(spans)).not.toContain(privateRef);
+    expect(JSON.stringify(spans)).not.toContain(privateCanary);
     expect(sink.resources()).toContainEqual(
       expect.objectContaining({
         'agentrail.hash_key_id': createHash('sha256')

@@ -10,6 +10,8 @@ site turns it on.
 
 Nothing is read of what is typed, pasted or chosen, nor of the page itself.
 
+Full guide: [Add the browser script](https://www.agentrail.co/docs/guides/journeys-browser).
+
 Before 1.0, a minor version (0.1 to 0.2) may change what the package offers.
 
 ## The tag

@@ -22,8 +22,9 @@ does not hold), `directory_unreachable` or `unsupported`, so a directory that
 is down is never read as a forgery and a signature it does not read is never
 called one.
 
-`agentrail-edge` and `agentrail-browser` are built on it; a component of
-your own can be too.
+`agentrail-edge`, `agentrail-browser` and `agentrail-node` are built on it;
+a component of your own can be too. To record a site, install one of those
+instead: see the [repository README](https://github.com/agentrail-co/agentrail-js#readme).
 
 ```sh
 npm install agentrail-core

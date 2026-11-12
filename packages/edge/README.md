@@ -1,14 +1,5 @@
 # agentrail-edge
 
-The Cloudflare and Vercel adapters include approximate city, region and country
-when the platform supplies them, alongside the hashed client address. Location
-is captured per request; raw addresses are never exported. A location describes
-the network exit, which may be a VPN, proxy or hosted agent. Missing platform
-data remains null. Custom adapters can supply `signals.city`, `signals.region`
-and `signals.source` together with `signals.country`; only use trusted metadata.
-Empty city and region values become null; longer values are shortened to the
-collector's 128-character limit before export, including for custom adapters.
-
 The Agentrail edge, in front of a site on the Fetch API: Cloudflare Workers,
 Vercel Routing Middleware, or anything else that speaks it. Each request is
 answered through the site's origin and recorded as one event, sent to the
@@ -42,6 +33,9 @@ for another 30 minutes.
 ```sh
 npm install agentrail-edge
 ```
+
+Full guide: [Install the edge](https://www.agentrail.co/docs/guides/journeys-edge).
+Create an **edge** source in your workspace's journey setup for its secret.
 
 Before 1.0, a minor version (0.1 to 0.2) may change what the package offers.
 
@@ -163,6 +157,17 @@ only hosts it has been told of; a directory that cannot be read leaves the
 signature `directory_unreachable`, never `invalid`.
 Nothing here is hashed, since nothing identifies a person: a fingerprint is
 shared by every copy of one client.
+
+## Approximate location
+
+The Cloudflare and Vercel adapters include approximate city, region and country
+when the platform supplies them, alongside the hashed client address. Location
+is captured per request; raw addresses are never exported. A location describes
+the network exit, which may be a VPN, proxy or hosted agent. Missing platform
+data remains null. Custom adapters can supply `signals.city`, `signals.region`
+and `signals.source` together with `signals.country`; only use trusted metadata.
+Empty city and region values become null; longer values are shortened to the
+collector's 128-character limit before export, including for custom adapters.
 
 ## Licence
 

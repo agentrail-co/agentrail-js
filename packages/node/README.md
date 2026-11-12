@@ -1,19 +1,51 @@
 # agentrail-node
 
-Node 22+ backend evidence for Agentrail: HTTP and fetch traces, application-verified identity, explicit journey milestones and structured logs. Uses OpenTelemetry's HTTP/protobuf exporters. The receiver must support `/ingest/otlp/v1/traces` and `/ingest/otlp/v1/logs` before installing this package.
+The Agentrail SDK for Node backends. It records what happens on your server
+when an agent or a person reaches it: incoming HTTP requests and the `fetch`
+and HTTP calls they make, the identity your application has verified, the
+milestones you name, structured logs and MCP tool calls. Agentrail links these
+steps with the ones your edge and pages record, into one journey.
 
-## Standalone startup
+It is built on OpenTelemetry and sends OTLP HTTP/protobuf to the Agentrail
+collector. Arguments, results, bodies, headers and raw identities never leave
+your process.
+
+- Node 22 or later
+- Full guide: [Install the Node SDK](https://www.agentrail.co/docs/guides/journeys-node)
+- The same features in other languages: [Go](https://github.com/agentrail-co/agentrail-go)
+  and [Python](https://github.com/agentrail-co/agentrail-python)
+
+Before 1.0, a minor version (0.1 to 0.2) may change what the package offers.
+
+## Install
+
+```sh
+npm install agentrail-node
+```
+
+In Agentrail, open your workspace's journey setup and create a backend source.
+The setup screen calls it **Node**; the Go and Python SDKs use the same kind.
+Copy its source secret, the workspace hash key and the collector address. Keep
+the secret and the hash key on the server: never put them in a page.
+
+## Quickstart
+
+**1. Start Agentrail before your application's HTTP modules load.**
 
 ```ts
-// instrumentation.ts — load before application HTTP modules
+// instrumentation.ts
 import { init } from 'agentrail-node';
+
+const secret = process.env.AGENTRAIL_SOURCE_SECRET;
+const hashKey = process.env.AGENTRAIL_HASH_KEY;
+if (!secret || !hashKey) throw new Error('Agentrail credentials are not set');
 
 export const agentrail = await init({
   collector: {
-    endpoint: 'https://api.example.com/ingest/otlp',
-    secret: process.env.AGENTRAIL_SOURCE_SECRET!, // a Node source
+    endpoint: 'https://<collector>/ingest/otlp',
+    secret,
   },
-  hashKey: process.env.AGENTRAIL_HASH_KEY!,
+  hashKey,
   serviceName: 'orders-api',
   outboundOrigins: ['https://inventory.internal'],
   onError(error) {
@@ -22,19 +54,118 @@ export const agentrail = await init({
 });
 ```
 
-The application validates its environment before initialization. Source credentials and the workspace hash key stay on the server. Never put them in a page. Start with `node --import ./instrumentation.js app.js`. `init` installs one tracer provider, logger provider, async context manager and HTTP/fetch instrumentation. Calling it again with the same options object returns the same client. It refuses an existing provider/context/propagator; use construction-time integration below. Shutdown is terminal for this installation.
+```sh
+node --import ./instrumentation.js app.js
+```
 
-A valid edge handoff continues its trace. Direct public calls and refused handoffs start fresh traces; a caller's trace is a directional link only. The HMAC binds method, exact forwarded path/query, parent, workspace key ID and a 60-second issue time. Keep clocks synchronized. Configure edge path/query rewrites with its `prepareOriginRequest` hook before signing. Arbitrary baggage and trace state do not leave managed requests. Only exact `outboundOrigins` receive signed context; the actual network destination determines admission, rather than an overridden Host header. Configure the same workspace key at each participating service. Exporter requests and this collector's incoming ingestion traffic are excluded.
+Every incoming HTTP request is now recorded, along with the HTTP and `fetch`
+calls made while handling it.
 
-## Verified context and milestones
+**2. Say who the caller is, once your application has authenticated them.**
 
 ```ts
-// After authenticating the application request:
 agentrail.identify({
   kind: 'agent_registration',
   id: authenticatedAgent.id,
   actingUserId: authenticatedAgent.userId,
 });
+```
+
+**3. Name the steps that matter.**
+
+```ts
+const order = await agentrail.milestone(
+  'checkout.confirm',
+  { surface: 'custom', kind: 'checkout.confirm' },
+  async () => confirmOrder(),
+);
+```
+
+**4. Drain on shutdown.**
+
+```ts
+process.on('SIGTERM', () => {
+  // Stop accepting requests, let handlers finish, then drain capture.
+  server.close(() => void agentrail.shutdown());
+});
+```
+
+## Options
+
+| Option                  | Required | What it does                                                                                                                              |
+| ----------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `collector.endpoint`    | yes      | The collector's OTLP base URL, http(s), without credentials, query or fragment. The SDK adds `/v1/traces` and `/v1/logs`.                 |
+| `collector.secret`      | yes      | The backend (**Node**) source's secret.                                                                                                   |
+| `hashKey`               | yes      | The workspace hash key. Identities and operation references are hashed with it before export.                                             |
+| `serviceName`           | yes      | A stable, non-sensitive name for this service. Well-formed text, at most 4096 characters.                                                 |
+| `serviceInstanceId`     | no       | This process's ID. A random UUID by default.                                                                                              |
+| `outboundOrigins`       | no       | Exact http(s) origins, such as `https://inventory.internal`, that receive signed trace context. None by default.                          |
+| `ignoreIncomingRequest` | no       | `(request) => boolean`. Requests it returns `true` for are not recorded. See [Your own servers](#your-own-servers).                       |
+| `incomingLocation`      | no       | `(request) => location \| null`. An approximate location for each request. See [Approximate IP location](#approximate-ip-location).       |
+| `logs.includeFields`    | no       | Log fields whose values may be exported, in order. None by default. See [Structured logs](#structured-logs).                              |
+| `logs.uncorrelated`     | no       | `false` leaves out logs written outside a managed request. `true` by default.                                                             |
+| `queue`                 | no       | Delivery limits. See [Delivery and shutdown](#delivery-and-shutdown).                                                                     |
+| `onError`               | no       | `(error: CaptureError) => void`. Told of every capture problem. Writes to the console by default.                                         |
+| `propagator`            | no       | Only with `createProcessors`: your existing `TextMapPropagator`. See [Existing OpenTelemetry provider](#existing-opentelemetry-provider). |
+
+Invalid options throw a `ConfigurationError` from `init` or `createProcessors`.
+Validate your environment before calling them.
+
+## How `init` installs
+
+`init` installs one tracer provider, one logger provider, an async context
+manager and the HTTP and `fetch` (Undici) instrumentation. Calling it again with
+the same options object returns the same client; calling it with different
+options throws. It refuses to replace an existing provider, context manager or
+propagator: if another library owns OpenTelemetry in your process, use
+[`createProcessors`](#existing-opentelemetry-provider) instead. Shutdown is
+terminal for the installation.
+
+## Trace handoff from the edge
+
+When [`agentrail-edge`](https://github.com/agentrail-co/agentrail-js/tree/main/packages/edge) runs in front of this service, it signs each
+request it forwards. A valid handoff continues the edge's trace, so the
+request's steps join the visit the edge recorded. Direct public calls and
+refused handoffs start a fresh trace; a caller's trace becomes a directional
+link only.
+
+The HMAC binds the method, the exact forwarded path and query, the trace
+parent, the workspace key ID and an issue time valid for 60 seconds. So:
+
+- configure the same workspace hash key at the edge and at every
+  participating service;
+- keep clocks synchronized;
+- apply path and query rewrites in the edge's `prepareOriginRequest` hook,
+  before it signs.
+
+Arbitrary baggage and trace state do not leave managed requests. Only the exact
+`outboundOrigins` receive signed context, and the real network destination
+decides, not an overridden `Host` header. The SDK's own exports and the
+collector's incoming ingestion traffic are excluded.
+
+## Verified identity
+
+```ts
+agentrail.identify({ kind: 'user', id: session.userId });
+```
+
+Call `identify` inside the request, after your application has authenticated
+the caller. `kind` is one of `user`, `agent_registration`, `agent_instance`,
+`oauth_client` or `api_key`; `actingUserId` is optional.
+
+- IDs are hashed with the workspace hash key before export.
+- A generic OTel `user.id` attribute, or anything the caller declares, is never
+  promoted to a verified identity.
+- Repeating the same assertion does nothing. A different assertion records a
+  separate auth milestone and keeps the first principal.
+- Concurrent requests have independent identity state.
+- Outside a managed request, `identify` reports `identity_outside_request` to
+  `onError`.
+
+## Milestones
+
+```ts
+agentrail.milestone('cart.viewed', { surface: 'custom', kind: 'cart.viewed' });
 
 const result = await agentrail.milestone(
   'checkout.confirm',
@@ -43,7 +174,65 @@ const result = await agentrail.milestone(
 );
 ```
 
-`identify` uses the active managed request, hashes IDs before export and never promotes generic OTel `user.id` or caller-declared attributes into verified identity. Outside a managed request it reports a capture error. Repeated identical assertions do nothing. A different assertion creates a distinct auth milestone while preserving the first principal. Concurrent requests have independent identity state. `milestone(name, context)` records an instant step; its callback overload scopes child spans, preserves the callback's result and rethrows its original error. Milestone names and kinds are bounded to 256 characters and should be stable operation names, without arguments or identifiers.
+Without a callback, `milestone` records an instant step. With one, it scopes
+the callback's child spans, returns the callback's result and rethrows its
+original error. Names and kinds are at most 256 characters: use stable
+operation names, never arguments or identifiers. Outside a request, a
+milestone starts its own managed operation.
+
+### Workflow and plugin evidence
+
+To track a business workflow (Agentrail's **Workflows** tracking), pass the
+operation your application has authenticated and authorized:
+
+```ts
+agentrail.milestone('delivery.requested', {
+  surface: 'custom',
+  kind: 'business.event',
+  performance: {
+    environment: 'production',
+    operation: {
+      namespaceId: configuredNamespaceId,
+      instanceRef: authorizedDeliveryAttempt.id,
+      role: 'start',
+    },
+    eventName: 'delivery.requested',
+    plugin: {
+      bindingId: configuredBindingId,
+      invocationId: crypto.randomUUID(),
+    },
+  },
+});
+```
+
+- Use a new `instanceRef` for each new business attempt, and the same one for
+  its start, progress, plugin invocations and backend outcome, across services.
+  Those services must share the workspace hash key and the operation namespace.
+  Source permissions are set in Agentrail.
+- Emit a separate milestone with `role: 'terminal'` and the configured success
+  event only after your backend has verified completion. A returned tool result
+  or an HTTP 200 is not business completion.
+- For a plugin invocation with no authorized operation, give only
+  `environment` and `plugin`. It shows as plugin activity, with no workflow
+  outcome credit.
+- `production` and `test` are kept apart. A binding identifies an
+  authenticated server deployment; it does not say which package version a
+  ChatGPT or Claude host installed.
+
+The operation reference is never exported. It is hashed with HMAC-SHA256 under
+the workspace hash key, over the UTF-8 JSON
+`["agentrail.operation", namespaceId, instanceRef]`, and the full digest is
+exported with the hash-key ID. The domain separation keeps principal hashes and
+other namespaces from becoming operation references. Do not put raw references
+in milestone names, invocation IDs or log fields, and use an opaque
+`invocationId`, never tool arguments or a customer identifier.
+
+The SDK never propagates this evidence to unrelated child spans and never reads
+arguments, results or a host conversation ID to invent it; the MCP adapter does
+not infer operations or declare a result successful. Namespace and binding IDs
+must be UUIDs. Invalid evidence is left out and reported as
+`invalid_performance`; the milestone and your callback still run. Without
+`performance`, capture is unchanged.
 
 ## Your own servers
 
@@ -56,42 +245,59 @@ caller can claim.
 const internalSecret = process.env.INTERNAL_SECRET;
 if (!internalSecret) throw new Error('INTERNAL_SECRET is not set');
 
-init({
+await init({
   // ...
   ignoreIncomingRequest: (request) =>
     request.headers['x-my-internal'] === internalSecret,
 });
 ```
 
-Check the secret is set before `init`. Unset, a request with no such header would match it, and every ordinary request would go unrecorded.
+Check the secret is set before `init`. Unset, a request with no such header
+would match it, and every ordinary request would go unrecorded.
 
 ## Approximate IP location
 
-To attach a location, supply `incomingLocation(request)` at startup. It runs
-synchronously for each captured incoming HTTP request. Return
-`{ country, region, city, source }`, with null for unavailable place fields,
-or return null when the address has no location. Country is a two-letter
-uppercase code; region and city are at most 128 characters. Source is
-`cloudflare`, `vercel`, `dbip` or `source` for another trusted provider.
-The hook's four values are copied when the request arrives, so reusing or
-changing the returned object cannot alter an earlier request's location.
+```ts
+await init({
+  // ...
+  incomingLocation: (request) => {
+    const country = request.headers['cf-ipcountry'];
+    return typeof country === 'string'
+      ? { country, region: null, city: null, source: 'cloudflare' }
+      : null;
+  },
+});
+```
 
-Use trusted platform metadata or a local database loaded before `init`.
-Resolve the original client address according to your application's proxy
-configuration; never trust an arbitrary forwarded header. Skip private and
-reserved addresses. A thrown lookup error is reported to `onError` as
-`location_failed`; the request continues without a location. No network
-request should run in this hook. The SDK exports the location on managed entry
-spans without the address, and the collector adds the observation time from
-the entry span. The exporter connection's address is not the visitor's.
-Without this hook, the SDK supplies no location. City-level results are
-approximate and can describe a VPN or hosting provider instead of the user.
+`incomingLocation(request)` runs synchronously for each captured incoming
+request. Return `{ country, region, city, source }`, with `null` for unknown
+place fields, or `null` when the address has no location.
+
+- `country` is a two-letter uppercase code; `region` and `city` are at most 128
+  characters.
+- `source` is `cloudflare`, `vercel`, `dbip`, or `source` for another trusted
+  provider.
+- The four values are copied when the request arrives, so changing the returned
+  object later cannot alter it.
+
+Read trusted platform metadata, or a local database loaded before `init`; run
+no network request in this hook. Resolve the original client address the way
+your application's proxy configuration says, never from an arbitrary forwarded
+header, and skip private and reserved addresses. The exporter connection's
+address is not the visitor's.
+
+The location is exported on managed entry spans without the address; the
+collector adds the observation time. A thrown lookup error is reported as
+`location_failed` and the request continues without a location. Without this
+hook, no location is recorded. City-level results are approximate and can
+describe a VPN or hosting provider rather than the person.
 
 ## Structured logs
 
 ```ts
 import pinoLogger from 'pino';
 import { pino } from 'agentrail-node/pino';
+
 const logger = pinoLogger({ hooks: pino(agentrail) });
 logger.error({ err: new TypeError('private detail') }, 'private detail');
 
@@ -102,13 +308,72 @@ agentrail.log({
 });
 ```
 
-The optional Pino 9/10 hook captures synchronously in the caller's async context and composes an existing hook as its second argument. The original logger output is unchanged. The standard OTel log processor is also available. Default exports contain severity, error type, event name, a stable per-record ID and exact span correlation. Arguments, results, headers, arbitrary attributes, exception messages and message bodies are excluded. Generic logs never create journey proof. Set `logs.uncorrelated: false` to exclude logs outside managed requests.
+The optional Pino 9/10 hook captures synchronously in the caller's async
+context and composes an existing hook passed as its second argument. Your
+logger's own output is unchanged. The standard OTel log processor is also
+available.
 
-Message text requires an explicit field allowlist, for example `logs: { includeFields: ['msg'] }` for Pino or `['message']` for a standard OTel body. `client.log` selects from `fields`. Only selected top-level scalar fields are serialized, with a 4096-character body limit. Fields are considered in allowlist order. String values are shortened before serialization, including JSON escaping and complete Unicode code points; fields whose keys or scalar values cannot fit are omitted, so the exported object stays valid JSON. Do not select credentials, raw identities or sensitive customer content. Span names for supporting operations are neutralized, exception events and status messages are dropped, URLs retain only valid `h` markers; a sanitized URL over 4096 characters is omitted while the entry and its trace evidence are retained, and resource exports contain service/component/hash-key metadata. Service names/instance IDs, routes, operation names, user agents and explicitly selected fields are customer-controlled context: choose non-sensitive values.
+By default an exported log holds its severity, error type, event name, a stable
+per-record ID and its exact span. Arguments, results, headers, arbitrary
+attributes, exception messages and message bodies are left out. Logs never
+create journey proof on their own.
+
+To export message text, name the fields: `logs: { includeFields: ['msg'] }` for
+Pino, `['message']` for a standard OTel body; `agentrail.log` selects from
+`fields`. Only selected top-level scalar fields are serialized, in allowlist
+order, into a body of at most 4096 characters. Strings are shortened before
+serialization, counting JSON escaping and keeping whole code points; a field
+that cannot fit is left out, so the body stays valid JSON. Never select
+credentials, raw identities or sensitive customer content.
+
+## MCP
+
+```ts
+import { McpServer, type ToolCallback } from '@modelcontextprotocol/server';
+import { mcp } from 'agentrail-node/mcp';
+
+const server = new McpServer({ name: 'orders', version: '1' });
+const capture = mcp({ client: agentrail });
+
+const checkout: ToolCallback = async (ctx) => {
+  // Authentication happens in the application's HTTP or auth boundary.
+  return { content: [{ type: 'text', text: 'done' }] };
+};
+server.registerTool('checkout', {}, capture.tool('checkout', checkout));
+// capture.resource(name, handler) and capture.prompt(name, handler) wrap the
+// other registration callbacks.
+```
+
+The optional adapter targets `@modelcontextprotocol/server` 2.3.1 and wraps
+the public registration callbacks; it changes no private handler or transport.
+Type a callback with the SDK's schema, for example
+`ToolCallback<typeof inputSchema>`, to keep typed arguments.
+
+- With HTTP capture installed, each call becomes a nested MCP step with its own
+  span, exact log correlation and the request's verified identity. Outside an
+  HTTP request it starts its own managed operation.
+- It records the registered name, method, client name and version, protocol
+  and whether the call failed. Arguments, result text, resource URIs and prompt
+  content are left out. Pass a stable registered resource name, not the
+  caller's URI.
+- MCP 2026-07-28 metadata comes from the request's public context envelope.
+  Legacy 2025-11-25 HTTP calls keep their protocol; a stateless server may have
+  no client name after its discarded `initialize`. No initialize cache is kept
+  across callers.
+- Client info and trace metadata a caller sends stay untrusted and cannot
+  assert a principal.
+- An `isError` result marks the call failed and is returned unchanged; a thrown
+  error keeps its identity.
+
+Tested: modern tool, resource and prompt requests, and the official client's
+legacy HTTP exchange. Other MCP SDK versions and transports are not verified in
+this release.
 
 ## Existing OpenTelemetry provider
 
-Create the processors **before** constructing the customer's provider. A running provider cannot recover spans its sampler already dropped.
+If your process already sets up OpenTelemetry, create the processors **before**
+constructing your provider. A running provider cannot recover spans its sampler
+already dropped.
 
 ```ts
 import { createProcessors } from 'agentrail-node';
@@ -134,98 +399,106 @@ const provider = new TracerProvider({
 const logProvider = new LoggerProvider({
   processors: [customerLogProcessor, capture.logProcessor],
 });
-// In the existing startup, register provider/logProvider, its async context manager,
-// capture.propagator and these request-aware hooks once:
+// In your existing startup, register provider and logProvider, an async
+// context manager, capture.propagator and these request-aware hooks, once:
 const http = new HttpInstrumentation(capture.httpOptions);
 const fetch = new UndiciInstrumentation(capture.undiciOptions);
 http.setTracerProvider(provider);
 fetch.setTracerProvider(provider);
+// capture.client has identify, milestone, log, flush, shutdown and diagnostics.
 ```
 
-Pass the existing `TextMapPropagator` as `options.propagator`, then register the **returned** `capture.propagator` once. It delegates extraction/injection for unmanaged work and prevents a late customer injection from re-adding headers to managed fetches. Keeping the original propagator globally bypasses this boundary: Undici injects after its request hook. For multiple installations, chain the earlier installation's returned propagator as the next one's base. Request-aware hooks still bind the actual destination/method/target before signing.
+- Pass your existing `TextMapPropagator` as `options.propagator`, then register
+  the **returned** `capture.propagator` once. It delegates for unmanaged work
+  and stops a late injection from re-adding headers to managed fetches. Keeping
+  the original propagator globally bypasses this, because Undici injects after
+  its request hook. For several installations, chain the earlier one's returned
+  propagator as the next one's base.
+- Keep other instrumentation, but install only one HTTP and one Undici
+  instrumentation, with these options. Keep the propagator and the HTTP hooks
+  together: extraction alone cannot verify the method and path.
+- The factory registers no globals and never changes another exporter's input.
+- The sampler promotes dropped managed spans to **record-only**, keeping your
+  sampled flag. Sampled-only exporters keep their sampling; an exporter that
+  exports record-only spans may see more records. Without the sampler wrapper,
+  dropped entries report `entry_not_recording` and their ancestry is lost.
+- Ordinary spans outside managed requests are not captured.
 
-Retain other customer instrumentation; install only one HTTP and one Undici instrumentation, passing these options to them. Keep the request-aware propagator and HTTP hooks together: extraction alone cannot verify method and path. The factory registers no globals and never changes another exporter's input. The sampler promotes dropped managed spans to **record-only**, preserving the customer's sampled flag. Standard sampled-only exporters retain their sampling; custom exporters that export record-only spans may see additional records. Without this sampler wrapper, dropped entries report `entry_not_recording`, and their ancestry is unavailable. Ordinary spans outside managed requests are not captured by the Agentrail span processor.
+**Sentry.** Wrap `SentrySampler` with this sampler when constructing the single
+provider you own, keep `SentrySpanProcessor` and its context manager, pass
+`new SentryPropagator()` as the base propagator and register the returned
+capture propagator globally. A 100% Sentry sample rate still drops HEAD and
+OPTIONS, which a processor alone cannot recover. The package's install test
+exercises this composition.
 
-For Sentry, compose this sampler around `SentrySampler` while constructing the single customer-owned provider, retaining `SentrySpanProcessor` and its context manager, with `new SentryPropagator()` passed as the base and the returned capture propagator registered globally. A 100% Sentry sample rate still drops HEAD/OPTIONS; merely adding a processor cannot retain those spans. Agentrail's packed installation gate exercises this public composition. In framework admission mode, use the supplied request-aware incoming hook/propagator in the admitted scope and disable automatic incoming instrumentation, so there is one backend entry per request. Handler work after admission is captured; earlier authentication/body parsing is outside that scope.
+**Framework admission.** If a framework admits requests after authentication or
+body parsing, use the request-aware incoming hook and propagator in the
+admitted scope and turn off automatic incoming instrumentation, so each request
+has one backend entry. Work before admission is not captured.
 
-Pinned compatible OTel family: API 1.9.1, core/trace/resources/context 2.10.0, logs/exporters/HTTP instrumentation 0.221.0, Undici instrumentation 0.31.0. This release supports those APIs; check dependency compatibility when composing a distribution.
+Pinned OpenTelemetry family: API 1.9.1; core, trace, resources and context
+2.10.0; logs, exporters and HTTP instrumentation 0.221.0; Undici
+instrumentation 0.31.0. Check compatibility when composing a distribution.
 
 ## Delivery and shutdown
 
-Defaults per signal: 2048 records including the in-flight batch, batches of 128, a 1000 ms schedule, 5000 ms export timeout, and 10000 ms flush/shutdown deadlines. Override with `queue`. Positive integer limits are required, batch size cannot exceed capacity and flush/shutdown deadlines cannot be shorter than the export timeout. One batch is in flight per signal. The official exporter retries retryable OTLP responses within its export deadline; permanent rejections and exhausted retries are reported and dropped. This is a bounded memory queue, without disk persistence.
+| `queue` option      | Default | Meaning                                               |
+| ------------------- | ------- | ----------------------------------------------------- |
+| `maxRecords`        | 2048    | Records held per signal, the in-flight batch included |
+| `batchSize`         | 128     | Records per export                                    |
+| `scheduledDelayMs`  | 1000    | Time between scheduled exports                        |
+| `exportTimeoutMs`   | 5000    | Deadline for one export, retries included             |
+| `flushTimeoutMs`    | 10000   | Deadline for `flush()`                                |
+| `shutdownTimeoutMs` | 10000   | Deadline for `shutdown()`                             |
 
-`await agentrail.flush()` drains capture within the configured bound. `await agentrail.shutdown()` stops instrumentation and drains once; call it during application shutdown. `diagnostics()` reports accepted, exported, dropped and pending records per signal. Overflow, export failure, deadline loss, refused handoff and missing capture context go to `onError` (console by default). SDK error reporting runs outside capture, including when routed through the same Pino or OTel logger, so diagnostics cannot feed their own full queue. If a synchronous `onError` callback throws, its exception and the original capture error are reported to the console outside capture, and queue cleanup continues. These capture outcomes do not replace an application response. Flush completion means attempts ended; inspect diagnostics/errors for delivery loss.
+Limits must be positive integers, `batchSize` cannot exceed `maxRecords`, and
+the flush and shutdown deadlines cannot be shorter than `exportTimeoutMs`. One
+batch is in flight per signal. The exporter retries retryable OTLP answers
+within the export deadline; permanent rejections and exhausted retries are
+reported and dropped. The queue is memory only, with no disk persistence.
 
-## MCP callback adapter
+- `await agentrail.flush()` drains capture within the configured bound. It means
+  attempts ended, not that every record arrived.
+- `await agentrail.shutdown()` stops instrumentation and drains once. Call it
+  after your server stops accepting requests.
+- `agentrail.diagnostics()` reports accepted, exported, dropped and pending
+  records for spans and logs.
 
-```ts
-import { McpServer, type ToolCallback } from '@modelcontextprotocol/server';
-import { mcp } from 'agentrail-node/mcp';
-const server = new McpServer({ name: 'orders', version: '1' });
-const capture = mcp({ client: agentrail });
-const checkout: ToolCallback = async (ctx) => {
-  // Authentication happens in the application's HTTP/auth boundary.
-  return { content: [{ type: 'text', text: 'done' }] };
-};
-server.registerTool('checkout', {}, capture.tool('checkout', checkout));
-// capture.resource(registeredName, handler) and capture.prompt(registeredName, handler)
-// wrap their respective public registration callbacks too.
-```
+## Errors
 
-The optional adapter targets `@modelcontextprotocol/server` 2.3.1 and public registration callbacks, without modifying private handlers or transports. Use a callback typed with the SDK's schema, for example `ToolCallback<typeof inputSchema>`, for typed tool arguments. With HTTP capture installed, each execution becomes a nested MCP step with a distinct span, exact log correlation and inherited application-verified identity. Outside an HTTP request, it starts its own managed operation. It captures the registered operation name, method, client name/version, protocol and error outcome; arguments, result text, resource URIs and prompt content stay off. Pass a stable registered resource name rather than the caller's URI.
+Capture problems never replace your application's response. They go to
+`onError` as a `CaptureError` with a `code`, a `signal` (`traces`, `logs` or
+`context`) and a record `count`:
 
-MCP 2026-07-28 metadata comes from the request's public context envelope. Legacy 2025-11-25 HTTP calls retain protocol metadata; a stateless server may have no client name after its discarded initialize request. The adapter keeps no initialize cache across callers. Client info and supplied trace metadata remain untrusted and cannot assert a principal. `isError` results mark the operation as failed while preserving the original result. Thrown application errors retain their original identity. Tests exercise modern tool/resource/prompt requests and the official client's legacy HTTP exchange; other MCP SDK versions/transports have not been verified in this release.
+| Code                       | Meaning                                               |
+| -------------------------- | ----------------------------------------------------- |
+| `queue_full`               | The queue was full; records were dropped              |
+| `export_failed`            | The collector refused, or retries ran out             |
+| `deadline`                 | A flush, shutdown or export deadline passed           |
+| `closed`                   | A record arrived after shutdown                       |
+| `handoff_refused`          | A trace handoff did not verify; a fresh trace started |
+| `entry_not_recording`      | A sampler dropped a managed entry span                |
+| `location_failed`          | `incomingLocation` threw                              |
+| `identity_outside_request` | `identify` was called outside a managed request       |
+| `invalid_performance`      | Workflow or plugin evidence was invalid and left out  |
 
-## Explicit workflow and plugin evidence
+SDK error reporting runs outside capture, including when routed through the
+same Pino or OTel logger, so diagnostics cannot feed their own full queue. If
+your `onError` throws, both errors go to the console outside capture and queue
+cleanup continues.
 
-After the application authenticates and authorizes a business operation, pass its
-operation-instance reference to `milestone`. Use a different reference for each
-new business attempt, and the same reference for its start, progress, plugin
-invocations and backend outcome across services. Services must share the workspace
-hash key and operation namespace. Source permissions are configured in Agentrail.
+## What is exported
 
-```ts
-agentrail.milestone('delivery.requested', {
-  surface: 'custom',
-  kind: 'business.event',
-  performance: {
-    environment: 'production',
-    operation: {
-      namespaceId: configuredNamespaceId,
-      instanceRef: authorizedDeliveryAttempt.id,
-      role: 'start',
-    },
-    eventName: 'delivery.requested',
-    plugin: {
-      bindingId: configuredBindingId,
-      invocationId: opaqueInvocationId,
-    },
-  },
-});
-```
+- Entry spans carry the method, route, status, user agent, the hashed verified
+  principal and valid `h` markers on the URL; a sanitized URL over 4096
+  characters is left out, and the entry and its trace evidence are kept.
+- Supporting operation span names are neutralized; exception events and status
+  messages are dropped.
+- Resources carry the service, the component (`agentrail-node` and its version)
+  and the hash-key ID.
+- Service names and instance IDs, routes, operation names, user agents and the
+  log fields you select are yours to choose: keep them non-sensitive.
 
-Emit a separate milestone with role `terminal` and the configured success event
-only after the backend verifies completion. A returned tool result or HTTP 200
-is not business completion. The MCP adapter does not infer operation references
-from arguments or automatically declare a result successful.
+## Licence
 
-The operation reference is HMAC-SHA256 hashed before entering telemetry context;
-the full digest is exported. The input is the UTF-8 JSON encoding of
-`["agentrail.operation", namespaceId, instanceRef]`, with the workspace hash key
-as the HMAC key. This domain separation prevents principal hashes or other
-namespaces from becoming operation references. The SDK exports the hash-key ID
-alongside the hash, never the key or raw operation reference. Do not place raw
-references in milestone names, invocation IDs, or log fields.
-
-For an invocation without an authorized operation, supply only `environment` and
-`plugin`. It remains visible as plugin activity without workflow-outcome credit.
-The SDK never propagates this assertion to unrelated child spans and never reads
-arguments, results or a host conversation ID to invent it. Production and test
-are separate. A binding identifies an authenticated server deployment; it does
-not establish which package version a ChatGPT or Claude host installed.
-
-This hook requires a collector that accepts explicit plugin/workflow attributes.
-Upgrade the collector before enabling the hook. Existing capture is unchanged
-when `performance` is omitted. No package is published by this change alone.
-
-Invalid per-call performance evidence is omitted and reported through `onError` as `invalid_performance`; the milestone and customer callback still run. Namespace and binding IDs must match the collector UUID contract. Use an opaque invocation ID, such as `crypto.randomUUID()`, never tool arguments or a customer identifier. Operation references are hashed locally, including any valid Unicode or NUL characters; they are never exported.
+[Apache-2.0](LICENSE).

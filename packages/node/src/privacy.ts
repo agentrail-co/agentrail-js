@@ -113,6 +113,8 @@ export function copySpan(
       'agentrail.step.surface': metadata.mark.surface,
       'agentrail.step.kind': metadata.mark.kind,
     });
+  if (metadata.mark?.performance !== undefined)
+    Object.assign(attrs, metadata.mark.performance);
   const mcp = metadata.mark?.mcp;
   if (mcp !== undefined) {
     if (mcp.client !== undefined)

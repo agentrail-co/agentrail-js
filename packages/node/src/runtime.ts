@@ -16,7 +16,8 @@ export interface State {
   readonly links: import('@opentelemetry/api').Link[];
   readonly entry: { span?: Span };
 }
-export interface Mark extends MilestoneContext {
+export interface Mark extends Omit<MilestoneContext, 'performance'> {
+  readonly performance?: Attributes;
   readonly name: string;
   readonly identity?: Attributes;
 }

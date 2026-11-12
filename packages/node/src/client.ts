@@ -14,6 +14,7 @@ import {
 } from './options.js';
 import { makeLog, type StructuredLog } from './privacy.js';
 import type { processors } from './processors.js';
+import { performanceAttributes } from './performance.js';
 import type { Runtime } from './runtime.js';
 
 export interface AgentrailNode {
@@ -66,9 +67,25 @@ export function createClient(
       throw new ConfigurationError(
         'Milestone name and kind must contain 1–256 characters.',
       );
+    const { performance, ...metadata } = details;
+    let normalized;
+    if (performance !== undefined) {
+      try {
+        normalized = performanceAttributes(
+          performance,
+          runtime.options.input.hashKey,
+        );
+      } catch (error) {
+        if (!(error instanceof ConfigurationError)) throw error;
+        runtime.options.report(
+          new CaptureError('invalid_performance', 'context', 1, error),
+        );
+      }
+    }
     const base = parent();
     const marked = base.setValue(runtime.markKey, {
-      ...details,
+      ...metadata,
+      ...(normalized === undefined ? {} : { performance: normalized }),
       name,
       ...(identity === undefined ? {} : { identity }),
     });

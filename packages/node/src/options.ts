@@ -8,7 +8,39 @@ export interface VerifiedIdentity {
   readonly id: string;
   readonly actingUserId?: string;
 }
+export interface AuthorizedOperation {
+  readonly namespaceId: string;
+  /** A business attempt ID the application has already authorized. Hashed locally; never exported. */
+  readonly instanceRef: string;
+  readonly role: 'start' | 'progress' | 'terminal';
+}
+export interface PluginInvocation {
+  readonly bindingId: string;
+  /** An opaque invocation ID, never tool arguments or a user identifier. */
+  readonly invocationId: string;
+}
+export type PerformanceContext = {
+  readonly environment: 'production' | 'test';
+} & (
+  | {
+      readonly operation: AuthorizedOperation;
+      readonly eventName: string;
+      readonly plugin?: PluginInvocation;
+    }
+  | {
+      readonly operation: AuthorizedOperation;
+      readonly eventName?: string;
+      readonly plugin: PluginInvocation;
+    }
+  | {
+      readonly operation?: never;
+      readonly eventName?: never;
+      readonly plugin: PluginInvocation;
+    }
+);
 export interface MilestoneContext {
+  /** Explicit evidence supplied after application authorization; never inferred from tool inputs or results. */
+  readonly performance?: PerformanceContext;
   readonly surface: Surface;
   readonly kind: string;
   readonly mcp?: {
@@ -57,7 +89,8 @@ export type CaptureCode =
   | 'handoff_refused'
   | 'entry_not_recording'
   | 'location_failed'
-  | 'identity_outside_request';
+  | 'identity_outside_request'
+  | 'invalid_performance';
 export class CaptureError extends Error {
   override readonly name = 'AgentrailCaptureError';
   constructor(

@@ -39,6 +39,7 @@ export function mcp(options: McpCaptureOptions) {
           kind: method === 'tools/call' ? 'tool.call' : `mcp.${method}`,
           mcp: {
             method,
+            name,
             ...(client === undefined ? {} : { client }),
             ...(version === undefined ? {} : { clientVersion: version }),
             ...(protocol === undefined ? {} : { protocol }),
@@ -49,7 +50,8 @@ export function mcp(options: McpCaptureOptions) {
           if (record(result)?.isError === true) {
             const span = trace.getSpan(context.active());
             span?.setStatus({ code: SpanStatusCode.ERROR });
-            span?.setAttribute('error.type', 'McpOperationError');
+            // The OpenTelemetry MCP convention's name for a tool result with isError.
+            span?.setAttribute('error.type', 'tool_error');
           }
           return result;
         },

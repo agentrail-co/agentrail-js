@@ -312,7 +312,11 @@ export function mcp(options: McpCaptureOptions) {
     }
     const { span, ctx } = internal.start(
       spanName(method, name),
-      { surface: 'mcp', kind: kindOf(method), mcp: { method, ...client } },
+      {
+        surface: 'mcp',
+        kind: kindOf(method),
+        mcp: { method, ...(name === null ? {} : { name }), ...client },
+      },
       { mcpFacts: facts },
     );
     return {
@@ -389,7 +393,7 @@ export function mcp(options: McpCaptureOptions) {
         record(response.result)?.isError === true
       ) {
         facts.isError = true;
-        failed(span, 'McpOperationError');
+        failed(span, 'tool_error');
       }
       if (options.capturePayloads !== undefined)
         capture(options.capturePayloads, call, error ?? response.result);
@@ -663,7 +667,7 @@ export function mcp(options: McpCaptureOptions) {
           run(
             internal.start(
               spanName(method, name),
-              { surface: 'mcp', kind },
+              { surface: 'mcp', kind, mcp: { method, name } },
               { step: false, mcpFacts: { layer: 'handler', method } },
             ),
             () => callback(...args),
@@ -683,7 +687,7 @@ export function mcp(options: McpCaptureOptions) {
       return run(
         internal.start(
           spanName(method, name),
-          { surface: 'mcp', kind, mcp: { method, ...client } },
+          { surface: 'mcp', kind, mcp: { method, name, ...client } },
           { mcpFacts: facts },
         ),
         () => callback(...args),
@@ -702,7 +706,7 @@ export function mcp(options: McpCaptureOptions) {
       try {
         const result = await callback();
         if (record(result)?.isError === true) {
-          failed(span, 'McpOperationError');
+          failed(span, 'tool_error');
           if (step?.method === 'tools/call') step.isError = true;
         }
         return result;

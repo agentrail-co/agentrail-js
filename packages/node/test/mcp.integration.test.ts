@@ -195,6 +195,29 @@ describe('MCP 2.3 request callbacks', () => {
             '2026-07-28',
         ),
       ).toBe(true);
+      // Fails if the OpenTelemetry MCP names are dropped, a resource is
+      // named by its URI, or a failed tool result reads as a thrown handler.
+      const named = (method: string) =>
+        attributesOf(
+          steps.find(
+            (span) =>
+              attributesOf(span.attributes)['mcp.method.name'] === method,
+          )?.attributes,
+        );
+      expect(named('tools/call')).toMatchObject({
+        'gen_ai.tool.name': 'synthetic_tool',
+        'error.type': 'tool_error',
+      });
+      expect(named('prompts/get')['gen_ai.prompt.name']).toBe(
+        'synthetic_prompt',
+      );
+      const resource = named('resources/read');
+      for (const key of [
+        'gen_ai.tool.name',
+        'gen_ai.prompt.name',
+        'mcp.resource.uri',
+      ])
+        expect(resource[key]).toBeUndefined();
       expect(sink.logs()).toHaveLength(2);
       expect(
         sink

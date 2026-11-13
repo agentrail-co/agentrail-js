@@ -294,7 +294,7 @@ describe('MCP transport capture', () => {
         responseBytes: expect.any(Number) as number,
       });
       expect(attributesOf(failing?.attributes)['error.type']).toBe(
-        'McpOperationError',
+        'tool_error',
       );
 
       const initialized = byName('mcp.notifications/initialized', 'transport');
@@ -550,7 +550,7 @@ describe('MCP spans as the contract describes them', () => {
         [A.layer]: 'handler',
         [OTLP.spanAttributes.explicitStep]: true,
         [A.isError]: true,
-        'error.type': 'McpOperationError',
+        'error.type': 'tool_error',
       });
     } finally {
       await h.close();

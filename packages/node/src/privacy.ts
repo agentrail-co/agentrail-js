@@ -119,6 +119,13 @@ export function copySpan(
     Object.assign(attrs, metadata.mark.performance);
   const mcp = metadata.mark?.mcp;
   if (mcp !== undefined) {
+    // The OpenTelemetry MCP server span's names. A resource is named only
+    // by its URI there, which can carry what was asked for, so it gets none.
+    attrs['mcp.method.name'] = boundedText(mcp.method, 128);
+    if (mcp.name !== undefined && mcp.method === 'tools/call')
+      attrs['gen_ai.tool.name'] = boundedText(mcp.name, 256);
+    if (mcp.name !== undefined && mcp.method === 'prompts/get')
+      attrs['gen_ai.prompt.name'] = boundedText(mcp.name, 256);
     if (mcp.client !== undefined)
       attrs['agentrail.mcp.client.name'] = boundedText(mcp.client, 128);
     if (mcp.clientVersion !== undefined)

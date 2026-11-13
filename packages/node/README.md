@@ -104,6 +104,11 @@ export const handler = capture.handler(
   }),
 );
 
+If you create the handler with a larger `maxRequestBodySize` than
+`createMcpHandler`'s 4 MiB default, give the wrapper the same value, or bodies
+past 4 MiB are served without a step:
+`capture.handler(createMcpHandler(factory, { maxRequestBodySize }), { maxRequestBodySize })`.
+
 // A transport you own: connect the wrapped one.
 await server.connect(capture.transport(transport));
 ```

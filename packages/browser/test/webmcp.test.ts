@@ -161,6 +161,11 @@ describe('WebMCP tool runs', () => {
       () => new Response('{}', { status: 200 }),
     ],
     [
+      'unserialisable',
+      () => ({ arguments: 1n, result: null }),
+      () => new Response('{}', { status: 200 }),
+    ],
+    [
       'refused',
       (run: { arguments: unknown; result: unknown }) => run,
       () => new Response('{}', { status: 500 }),
@@ -193,7 +198,7 @@ describe('WebMCP tool runs', () => {
         variant === 'withheld'
           ? []
           : [
-              variant === 'throwing'
+              variant === 'throwing' || variant === 'unserialisable'
                 ? expect.any(BrowserPayloadRedactError)
                 : new BrowserCollectorRefusedError(500),
             ],

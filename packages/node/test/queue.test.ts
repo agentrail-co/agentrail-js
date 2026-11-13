@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { ExportQueue } from '../src/queue.js';
 import { resolveOptions } from '../src/options.js';
-import { BATCH_BYTES } from '../src/limits.js';
+import { EXPORT_BATCH_BYTES } from '../src/limits.js';
 import { options } from './support/options.js';
 
 describe('queue drain completion', () => {
@@ -76,7 +76,7 @@ describe('byte-sized batches', () => {
       await queue.flush();
       expect(batches).toEqual([[1, 2], [3, 4], [5]]);
       expect(
-        batches.every((batch) => batch.length * 6 * MiB <= BATCH_BYTES),
+        batches.every((batch) => batch.length * 6 * MiB <= EXPORT_BATCH_BYTES),
       ).toBe(true);
     } finally {
       await queue.shutdown();

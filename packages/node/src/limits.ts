@@ -1,18 +1,18 @@
 /**
- * What one OTLP export can carry: the collector's body limit
- * (`otlp.limits.bodyBytes` in the contract).
+ * The collector's limits (`otlp.limits` in the contract); the contract
+ * package is never published, so they are kept here and
+ * `test/limits.test.ts` holds them to it.
  */
-export const EXPORT_BODY_BYTES = 16 * 1024 * 1024;
 /**
- * A span batch closes before its estimated size passes this: the rest is
- * headroom for the resource, the envelope and the estimate's error.
+ * A span batch closes before its estimated size passes this
+ * (`otlp.limits.exportBatchBytes`): the rest is headroom for the resource,
+ * the envelope and the estimate's error, under the 16 MiB a body may hold.
  */
-export const BATCH_BYTES = EXPORT_BODY_BYTES - 1024 * 1024;
+export const EXPORT_BATCH_BYTES = 15 * 1024 * 1024;
 /**
  * The most MCP payload text one span carries, both payloads together, so the
- * span alone fits one batch: its other attributes are bounded far below the
- * headroom left.
+ * span alone fits one batch (`otlp.limits.mcpPayloadBytes`).
  */
-export const RECORD_PAYLOAD_BYTES = BATCH_BYTES - 1024 * 1024;
+export const MCP_PAYLOAD_BYTES = 14 * 1024 * 1024;
 /** The most MCP payload text one span queue holds, in flight included. */
 export const QUEUE_PAYLOAD_BYTES = 64 * 1024 * 1024;

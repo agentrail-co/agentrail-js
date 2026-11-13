@@ -8,6 +8,7 @@ import {
   McpServer,
   WebStandardStreamableHTTPServerTransport,
   createMcpHandler,
+  type McpHttpHandler,
   CLIENT_CAPABILITIES_META_KEY,
   CLIENT_INFO_META_KEY,
   PROTOCOL_VERSION_META_KEY,
@@ -248,6 +249,8 @@ describe('MCP transport capture', () => {
         requestBytes: expect.any(Number) as number,
         responseBytes: expect.any(Number) as number,
       });
+      // The client as its initialize declared it; the protocol from this
+      // message's own header.
       expect(attributesOf(ok?.attributes)).toMatchObject({
         [A.clientName]: 'synthetic-client',
         [A.clientVersion]: '1.0.0',
@@ -364,6 +367,10 @@ describe('MCP transport capture', () => {
           .transportSpans()
           .find((span) => span.name === 'mcp.tools/call:synthetic_tool');
         const attributes = attributesOf(call?.attributes);
+        // In memory, a call carries no protocol of its own: the one its
+        // initialize offered is never carried over, its client is.
+        expect(attributes[A.protocolVersion]).toBeUndefined();
+        expect(attributes[A.clientName]).toBe('synthetic-client');
         const bytes = Buffer.concat(
           h.sink.packets.map((packet) => packet.bytes),
         ).toString();
@@ -458,6 +465,151 @@ describe('MCP transport capture', () => {
         ),
       ).toBe(true);
       expect(h.failures).toEqual([]);
+    } finally {
+      await h.close();
+    }
+  });
+});
+
+/** Sends one raw message to a captured in-memory server; resolves once it is answered or handled. */
+async function rawCall(
+  h: Awaited<ReturnType<typeof harness>>,
+  message: Record<string, unknown>,
+) {
+  const [client, served] = InMemoryTransport.createLinkedPair();
+  await server(h.capture).connect(h.capture.transport(served));
+  const answered = new Promise<unknown>((resolve) => {
+    client.onmessage = resolve;
+  });
+  await client.start();
+  await client.send(message as never);
+  if ('id' in message) await answered;
+  await client.close();
+  await h.sdk.client.flush();
+  return h.transportSpans();
+}
+
+describe('MCP spans as the contract describes them', () => {
+  // Fails if someone names a call with no name mcp.<method>: (a trailing colon).
+  it('names a call with an empty name by its method alone', async () => {
+    const h = await harness();
+    try {
+      const [span] = await rawCall(h, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: '', arguments: {} },
+      });
+      expect(span?.name).toBe('mcp.tools/call');
+    } finally {
+      await h.close();
+    }
+  });
+
+  // Fails if someone sends a request's payload only once it is answered:
+  // a notification, or a request never answered, would lose it.
+  it('sends the request payload of a message that gets no answer', async () => {
+    const h = await harness({ redact: (payload) => payload });
+    try {
+      const [span, ...more] = await rawCall(h, {
+        jsonrpc: '2.0',
+        method: 'notifications/synthetic',
+        params: { step: 1 },
+      });
+      expect(more).toEqual([]);
+      expect(attributesOf(span?.attributes)).toMatchObject({
+        [A.requestPayload]: '{"step":1}',
+      });
+      expect(attributesOf(span?.attributes)[A.responsePayload]).toBeUndefined();
+      expect(attributesOf(span?.attributes)[A.responseBytes]).toBeUndefined();
+    } finally {
+      await h.close();
+    }
+  });
+
+  // Fails if someone leaves a handler that is the step without the
+  // result.is_error a transport span would carry.
+  it('marks a tool result with isError on a handler that is the step', async () => {
+    const h = await harness();
+    try {
+      const unwrapped = createMcpHandler(() => server(h.capture));
+      const agent = legacy();
+      await agent.connect(
+        new StreamableHTTPClientTransport(url, {
+          fetch: (input, init) => unwrapped.fetch(new Request(input, init)),
+        }),
+      );
+      await agent.callTool({ name: 'failing_tool', arguments: {} });
+      await agent.close();
+      await h.sdk.client.flush();
+      const step = h
+        .mcpSpans()
+        .find((span) => span.name === 'mcp.tools/call:failing_tool');
+
+      expect(attributesOf(step?.attributes)).toMatchObject({
+        [A.layer]: 'handler',
+        [OTLP.spanAttributes.explicitStep]: true,
+        [A.isError]: true,
+        'error.type': 'McpOperationError',
+      });
+    } finally {
+      await h.close();
+    }
+  });
+
+  // Fails if someone leaves a request the transport refused without a
+  // JSON-RPC answer looking like a call that succeeded.
+  it.each([
+    [
+      'a refusal that is not JSON-RPC',
+      [{ jsonrpc: '2.0', id: 1, method: 'tools/list' }],
+      () =>
+        new Response('Forbidden', {
+          status: 403,
+          headers: { 'content-type': 'text/plain' },
+        }),
+    ],
+    [
+      'a batch answered by one error with id null',
+      [
+        { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+        { jsonrpc: '2.0', id: 2, method: 'prompts/list' },
+      ],
+      () =>
+        Response.json(
+          {
+            jsonrpc: '2.0',
+            id: null,
+            error: { code: -32600, message: 'Invalid Request' },
+          },
+          { status: 400 },
+        ),
+    ],
+  ])('records %s as McpTransportRejected', async (_, body, answer) => {
+    const h = await harness();
+    try {
+      // A handler whose transport refuses every request.
+      const inner: Pick<McpHttpHandler, 'fetch'> = {
+        fetch: () => Promise.resolve(answer()),
+      };
+      const refusing = h.capture.handler(inner);
+      await refusing.fetch(
+        new Request(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        }),
+      );
+      await vi.waitFor(async () => {
+        await h.sdk.client.flush();
+        expect(h.transportSpans()).toHaveLength(body.length);
+      });
+      for (const span of h.transportSpans()) {
+        expect(span.status?.code).toBe(2);
+        expect(attributesOf(span.attributes)['error.type']).toBe(
+          'McpTransportRejected',
+        );
+      }
     } finally {
       await h.close();
     }
@@ -603,6 +755,8 @@ describe('MCP handler capture (createMcpHandler)', () => {
             'mcp-protocol-version': '2026-07-28',
             'mcp-method': 'tools/call',
             'mcp-name': 'synthetic_tool',
+            // Only a request carries it: the server issued no session.
+            'mcp-session-id': 'synthetic-client-made-session',
           },
           body: JSON.stringify(message),
         }),

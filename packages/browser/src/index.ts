@@ -18,7 +18,7 @@ import { traceFetch, traceXhr } from './fetch.js';
 import { doneOnTab, nowOf, sessionOf, tabOf } from './session.js';
 import { createPayloads, payloadsEndpoint } from './payloads.js';
 import { createTransport } from './transport.js';
-import { jsonOf, traceTools, type ToolContext } from './webmcp.js';
+import { traceTools, type ToolContext } from './webmcp.js';
 import { BROWSER_EVENT_KINDS, type Fingerprint, type Page } from './wire.js';
 
 /**
@@ -219,28 +219,34 @@ export function start(options: BrowserOptions): Agentrail {
     capture === undefined || payloads === null
       ? undefined
       : (event, run) => {
-          let redacted;
+          let payload: {
+            request: string | null;
+            response: string | null;
+          } | null;
           try {
-            redacted = capture.redact(run);
+            const redacted = capture.redact(run);
+            payload =
+              redacted === null
+                ? null
+                : {
+                    request: serialised(redacted.arguments),
+                    response: serialised(redacted.result),
+                  };
           } catch (error) {
-            // The site's own hook: whatever it throws is told, never thrown
-            // into the tool's caller, and the run still goes, without content.
+            // The site's own hook, or what it returned (a cycle, a BigInt):
+            // told, never thrown into the tool's caller, and the run still
+            // goes, without content.
             onError(
               new BrowserPayloadRedactError(
-                'The capturePayloads redact hook threw; the tool run was sent without its content.',
+                'The capturePayloads redact hook threw, or returned what JSON cannot hold; the tool run was sent without its content.',
                 { cause: error },
               ),
             );
             record(event);
             return;
           }
-          if (redacted === null) record(event);
-          else
-            payloads.send(
-              event,
-              jsonOf(redacted.arguments),
-              jsonOf(redacted.result),
-            );
+          if (payload === null) record(event);
+          else payloads.send(event, payload.request, payload.response);
         };
 
   // The page view: a trace of its own, every step on the page under it.
@@ -398,6 +404,18 @@ export function start(options: BrowserOptions): Agentrail {
       started.delete(window);
     },
   };
+}
+
+/**
+ * A redacted value's JSON text; null where there is none to send. A cycle
+ * or a BigInt throws, to the redact hook's failure.
+ */
+function serialised(value: unknown): string | null {
+  return value === undefined ||
+    typeof value === 'function' ||
+    typeof value === 'symbol'
+    ? null
+    : JSON.stringify(value);
 }
 
 /** The status the page's own document came with, where the browser tells it. */

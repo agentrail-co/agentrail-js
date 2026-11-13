@@ -81,13 +81,28 @@ export interface OtlpContract {
       string
     >
   >;
-  /** What an MCP span is, in words: its name, layers, sizes, session and payloads. */
-  readonly mcpSpans: Readonly<Record<string, string>>;
+  /** What an MCP span is, in words: its name, layers, error types, sizes, session and payloads. */
+  readonly mcpSpans: Readonly<
+    Record<
+      | 'name'
+      | 'transport'
+      | 'errorTypes'
+      | 'handler'
+      | 'sizes'
+      | 'session'
+      | 'payloads',
+      string
+    >
+  >;
   readonly limits: {
     readonly bodyBytes: number;
     readonly records: number;
     readonly recordIdCharacters: number;
     readonly selectedTextCharacters: number;
+    /** A span's two MCP payloads together, UTF-8, at most. */
+    readonly mcpPayloadBytes: number;
+    /** An SDK closes an export batch before its size passes this. */
+    readonly exportBatchBytes: number;
   };
   readonly fixtures: {
     readonly accepted: readonly {

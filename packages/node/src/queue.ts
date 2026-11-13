@@ -2,7 +2,7 @@ import { ExportResultCode, suppressTracing } from '@opentelemetry/core';
 import { context } from '@opentelemetry/api';
 import type { ExportResult } from '@opentelemetry/core';
 import { CaptureError, type ResolvedOptions } from './options.js';
-import { BATCH_BYTES, QUEUE_PAYLOAD_BYTES } from './limits.js';
+import { EXPORT_BATCH_BYTES, QUEUE_PAYLOAD_BYTES } from './limits.js';
 
 interface Exporter<T> {
   export(records: T[], callback: (result: ExportResult) => void): void;
@@ -81,7 +81,7 @@ export class ExportQueue<T> {
     this.stats.accepted++;
     if (
       this.records.length >= this.options.queue.batchSize ||
-      this.queuedBytes >= BATCH_BYTES
+      this.queuedBytes >= EXPORT_BATCH_BYTES
     )
       void this.drain();
     else if (this.timer === undefined) {
@@ -140,7 +140,7 @@ export class ExportQueue<T> {
     for (const entry of this.records) {
       if (
         count === this.options.queue.batchSize ||
-        (count > 0 && bytes + entry.bytes > BATCH_BYTES)
+        (count > 0 && bytes + entry.bytes > EXPORT_BATCH_BYTES)
       )
         break;
       bytes += entry.bytes;

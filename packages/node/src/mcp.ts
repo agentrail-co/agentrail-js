@@ -8,7 +8,7 @@ import type {
 } from '@modelcontextprotocol/server';
 import { createParser } from 'eventsource-parser';
 import type { AgentrailNode } from './client.js';
-import { RECORD_PAYLOAD_BYTES } from './limits.js';
+import { MCP_PAYLOAD_BYTES } from './limits.js';
 import { CaptureError } from './options.js';
 import { boundedText } from './privacy.js';
 import { internalOf, type McpFacts } from './runtime.js';
@@ -111,7 +111,8 @@ function nameOf(method: string, params: Message | undefined): string | null {
       : method === 'tools/call' || method === 'prompts/get'
         ? params?.name
         : undefined;
-  return typeof name === 'string' ? name : null;
+  // An empty name is no name: the span is mcp.<method>, with no colon.
+  return typeof name === 'string' && name !== '' ? name : null;
 }
 function spanName(method: string, name: string | null): string {
   return boundedText(
@@ -128,26 +129,33 @@ function failed(span: Span, type: string): void {
   span.setStatus({ code: SpanStatusCode.ERROR });
   span.setAttribute('error.type', type);
 }
-/** Self-reported client facts: initialize params, then the request envelope, then the header. */
+/** What the client declared in its initialize, for the messages after it. */
+type Declared = Pick<ClientFacts, 'client' | 'clientVersion'>;
+/**
+ * Self-reported client facts. The protocol is what this message carried
+ * (initialize params, its envelope, the header), never negotiated nor
+ * remembered; the client's name and version are its envelope's, else what
+ * it declared in initialize.
+ */
 function clientOf(
   method: string,
   params: Message | undefined,
   header: string | null | undefined,
-  known: ClientFacts,
+  declared: Declared,
 ): ClientFacts {
   const meta = record(params?._meta);
   const info =
     (method === 'initialize' ? record(params?.clientInfo) : undefined) ??
     record(meta?.[CLIENT_INFO]);
-  const client = boundedText(info?.name, 128) ?? known.client;
-  const clientVersion = boundedText(info?.version, 128) ?? known.clientVersion;
-  const protocol =
-    boundedText(
-      (method === 'initialize' ? params?.protocolVersion : undefined) ??
-        meta?.[PROTOCOL_VERSION] ??
-        header,
-      64,
-    ) ?? known.protocol;
+  const client = boundedText(info?.name, 128) ?? declared.client;
+  const clientVersion =
+    boundedText(info?.version, 128) ?? declared.clientVersion;
+  const protocol = boundedText(
+    (method === 'initialize' ? params?.protocolVersion : undefined) ??
+      meta?.[PROTOCOL_VERSION] ??
+      header,
+    64,
+  );
   return {
     ...(client === undefined ? {} : { client }),
     ...(clientVersion === undefined ? {} : { clientVersion }),
@@ -178,18 +186,18 @@ function fitted(
   const responseBytes =
     response === undefined ? 0 : Buffer.byteLength(response);
   const facts: PayloadFacts = {};
-  if (requestBytes + responseBytes <= RECORD_PAYLOAD_BYTES) {
+  if (requestBytes + responseBytes <= MCP_PAYLOAD_BYTES) {
     if (request !== undefined) facts.requestPayload = request;
     if (response !== undefined) facts.responsePayload = response;
     return facts;
   }
   // Each gets half; one that needs less leaves the rest to the other.
-  const half = Math.floor(RECORD_PAYLOAD_BYTES / 2);
+  const half = Math.floor(MCP_PAYLOAD_BYTES / 2);
   const requestLimit =
     requestBytes <= half
       ? requestBytes
-      : Math.max(half, RECORD_PAYLOAD_BYTES - responseBytes);
-  const responseLimit = RECORD_PAYLOAD_BYTES - requestLimit;
+      : Math.max(half, MCP_PAYLOAD_BYTES - responseBytes);
+  const responseLimit = MCP_PAYLOAD_BYTES - requestLimit;
   if (request !== undefined)
     if (requestBytes > requestLimit) {
       facts.requestPayload = truncated(request, requestLimit);
@@ -244,7 +252,7 @@ export function mcp(options: McpCaptureOptions) {
   function begin(
     message: Message,
     header: string | null | undefined,
-    known: ClientFacts,
+    declared: Declared,
   ): Call | undefined {
     const { method } = message;
     // A response the client sent back to a server request is not a call.
@@ -254,8 +262,12 @@ export function mcp(options: McpCaptureOptions) {
     const facts: McpFacts = { layer: 'transport', method };
     const bytes = jsonBytes(message);
     if (bytes !== undefined) facts.requestBytes = bytes;
-    const client = clientOf(method, params, header, known);
-    if (method === 'initialize') Object.assign(known, client);
+    const client = clientOf(method, params, header, declared);
+    if (method === 'initialize') {
+      if (client.client !== undefined) declared.client = client.client;
+      if (client.clientVersion !== undefined)
+        declared.clientVersion = client.clientVersion;
+    }
     const { span, ctx } = internal.start(
       spanName(method, name),
       { surface: 'mcp', kind: kindOf(method), mcp: { method, ...client } },
@@ -330,14 +342,17 @@ export function mcp(options: McpCaptureOptions) {
       }
       if (options.capturePayloads !== undefined)
         capture(options.capturePayloads, call, error ?? response.result);
-    }
+    } else if (options.capturePayloads !== undefined)
+      // A notification, or a request never answered: its request still goes.
+      capture(options.capturePayloads, call, undefined);
     span.end();
   }
 
   /** Wraps a transport you own; pass the result to `server.connect`. */
   function transport<T extends Transport>(inner: T): T {
     const pending = new Map<string, Call>();
-    const known: ClientFacts = {};
+    // One transport is one connection: its initialize names the client.
+    const declared: Declared = {};
     let onmessage = inner.onmessage;
     let onclose = inner.onclose;
     const received = (
@@ -350,7 +365,7 @@ export function mcp(options: McpCaptureOptions) {
       const call = begin(
         message,
         extra?.request?.headers.get('mcp-protocol-version'),
-        known,
+        declared,
       );
       if (call === undefined) {
         deliver();
@@ -430,9 +445,8 @@ export function mcp(options: McpCaptureOptions) {
     response: Response,
     calls: readonly Call[],
   ): void {
-    const session =
-      response.headers.get('mcp-session-id') ??
-      request.headers.get('mcp-session-id');
+    // Only an id the server issued; one a request alone carried is not a session.
+    const session = response.headers.get('mcp-session-id');
     const waiting = new Map<string, Call>();
     for (const call of calls) {
       const key = idKey(call.id);
@@ -440,8 +454,12 @@ export function mcp(options: McpCaptureOptions) {
       else waiting.set(key, call);
     }
     if (waiting.size === 0) return;
+    // Left without a JSON-RPC answer: refused, where the status says so.
     const rest = () => {
-      for (const call of waiting.values()) finish(call, undefined, session);
+      for (const call of waiting.values()) {
+        if (response.status >= 400) failed(call.span, 'McpTransportRejected');
+        finish(call, undefined, session);
+      }
       waiting.clear();
     };
     const answered = (value: unknown) => {
@@ -506,12 +524,13 @@ export function mcp(options: McpCaptureOptions) {
         const text = await bodyText(request);
         body = text === undefined ? undefined : parseJson(text);
       }
-      const known: ClientFacts = {};
       const header = request.headers.get('mcp-protocol-version');
+      // A stateless request is its own connection: only an initialize in it declares the client.
+      const declared: Declared = {};
       const calls = (Array.isArray(body) ? body : [body]).flatMap((item) => {
         const message = record(item);
         const call =
-          message === undefined ? undefined : begin(message, header, known);
+          message === undefined ? undefined : begin(message, header, declared);
         return call === undefined ? [] : [call];
       });
       const [only] = calls;
@@ -536,7 +555,7 @@ export function mcp(options: McpCaptureOptions) {
           call.span.setStatus({ code: SpanStatusCode.ERROR });
           if (error instanceof Error)
             call.span.setAttribute('error.type', error.name);
-          finish(call, undefined, request.headers.get('mcp-session-id'));
+          finish(call, undefined, null);
         }
         throw error;
       }
@@ -589,18 +608,24 @@ export function mcp(options: McpCaptureOptions) {
           { mcpFacts: facts },
         ),
         () => callback(...args),
+        facts,
       );
     };
   }
   function run<Result>(
     started: { span: Span; ctx: Context },
     callback: () => Result | Promise<Result>,
+    /** A step's facts: alone, the handler carries what a transport span would. */
+    step?: McpFacts,
   ): Promise<Result> {
     const { span } = started;
     return context.with(started.ctx, async () => {
       try {
         const result = await callback();
-        if (record(result)?.isError === true) failed(span, 'McpOperationError');
+        if (record(result)?.isError === true) {
+          failed(span, 'McpOperationError');
+          if (step?.method === 'tools/call') step.isError = true;
+        }
         return result;
       } catch (error) {
         span.setStatus({ code: SpanStatusCode.ERROR });

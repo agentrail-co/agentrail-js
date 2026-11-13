@@ -57,15 +57,11 @@ const encoder = new TextEncoder();
 
 /** A value's JSON text; null where it has none (undefined, a function, a cycle, a BigInt). */
 export function jsonOf(value: unknown): string | null {
-  // JSON.stringify gives no text for these.
-  if (
-    value === undefined ||
-    typeof value === 'function' ||
-    typeof value === 'symbol'
-  )
-    return null;
   try {
-    return JSON.stringify(value);
+    // Undefined, a function, a symbol, or a toJSON that gives undefined:
+    // no text.
+    const text: unknown = JSON.stringify(value);
+    return typeof text === 'string' ? text : null;
   } catch {
     // A cycle or a BigInt, or the page's own getter or toJSON throwing:
     // whatever it is, the tool's caller never gets it, and the size is null.

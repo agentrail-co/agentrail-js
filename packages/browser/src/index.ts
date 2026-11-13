@@ -410,11 +410,9 @@ export function start(options: BrowserOptions): Agentrail {
  * or a BigInt throws, to the redact hook's failure.
  */
 function serialised(value: unknown): string | null {
-  return value === undefined ||
-    typeof value === 'function' ||
-    typeof value === 'symbol'
-    ? null
-    : JSON.stringify(value);
+  // Undefined, a function, a symbol, or a toJSON that gives undefined.
+  const text: unknown = JSON.stringify(value);
+  return typeof text === 'string' ? text : null;
 }
 
 /** The status the page's own document came with, where the browser tells it. */

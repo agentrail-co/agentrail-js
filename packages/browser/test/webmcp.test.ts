@@ -282,6 +282,42 @@ describe('WebMCP runs, as a good guest of the page', () => {
     });
   });
 
+  // Fails if someone takes JSON.stringify to always give text: a toJSON
+  // that gives undefined would be sized as 0, or, with payloads captured,
+  // replace the tool's answer.
+  it.each([
+    ['off', undefined],
+    ['on', { redact: (run: { arguments: unknown; result: unknown }) => run }],
+  ] as const)(
+    'gives null sizes for a value with no JSON, payloads %s',
+    async (_, capturePayloads) => {
+      const tools = webmcp();
+      const errors: Error[] = [];
+      const site = onPage(
+        {
+          ...quiet,
+          onError: (error) => errors.push(error),
+          ...(capturePayloads === undefined ? {} : { capturePayloads }),
+        },
+        never,
+      );
+      const empty = { toJSON: () => undefined };
+      tools.give('empty', () => Promise.resolve(empty));
+      await expect(tools.run('empty', empty)).resolves.toBe(empty);
+      await settled();
+      const run =
+        (await site.payloadCalls()).at(-1)?.call.event ??
+        (await site.sent())
+          .flatMap((call) => call.events)
+          .find((event) => event.kind === 'agent.tool.executed');
+      expect(run?.webmcp).toMatchObject({
+        argumentBytes: null,
+        resultBytes: null,
+      });
+      expect(errors).toEqual([]);
+    },
+  );
+
   // Fails if someone hands the redact hook the live result: a hook that
   // redacts in place would change what the tool's caller gets.
   it('gives the redact hook copies, so redacting in place never changes the answer', async () => {

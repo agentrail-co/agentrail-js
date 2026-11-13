@@ -45,6 +45,8 @@ export interface MilestoneContext {
   readonly kind: string;
   readonly mcp?: {
     readonly method: string;
+    /** The tool, resource or prompt's registered name, never a value from its arguments. */
+    readonly name?: string;
     readonly client?: string;
     readonly clientVersion?: string;
     readonly protocol?: string;

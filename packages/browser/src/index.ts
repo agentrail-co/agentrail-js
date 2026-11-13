@@ -401,6 +401,9 @@ export function start(options: BrowserOptions): Agentrail {
       stopped = true;
       for (const restore of undo.reverse()) restore();
       undo.length = 0;
+      // A run whose payload is still on its way goes as its event alone,
+      // before the queue it joins stops.
+      payloads?.release();
       transport.send('fetch');
       transport.stop();
       started.delete(window);

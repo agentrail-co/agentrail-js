@@ -141,6 +141,8 @@ export interface Payloads {
    * queue, goes as its event alone.
    */
   close(): void;
+  /** Stopping: every payload still on its way goes as its event alone. */
+  release(): void;
 }
 
 interface Pending {
@@ -250,6 +252,9 @@ export function createPayloads(options: PayloadOptions): Payloads {
             );
           },
         );
+    },
+    release() {
+      for (const entry of settleAll()) options.alone(entry.call.event);
     },
     close() {
       const [first, ...others] = settleAll().map((entry) => entry.call);

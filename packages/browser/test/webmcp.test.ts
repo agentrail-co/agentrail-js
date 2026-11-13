@@ -430,6 +430,23 @@ describe('payloads on their way', () => {
     expect(await runsOf(site)).toHaveLength(1);
     expect(errors).toEqual([expect.any(BrowserPayloadBudgetError)]);
   }, 60_000);
+
+  // Fails if someone stops the queue with a run's payload still on its way:
+  // a payload call that then failed would leave the run with nowhere to go.
+  it('sends each run whose payload is on its way alone when it stops', async () => {
+    const tools = webmcp();
+    const site = onPage(
+      { ...quiet, capturePayloads: { redact: (run) => run } },
+      never,
+    );
+    tools.give('book', () => Promise.resolve({ booked: true }));
+    await tools.run('book', {});
+    site.agentrail.stop();
+    const runs = (await site.calls())
+      .flatMap((call) => call.events)
+      .filter((event) => event.kind === 'agent.tool.executed');
+    expect(runs.map((event) => event.webmcp?.tool)).toEqual(['book']);
+  });
 });
 
 describe('a payload cut to fit', () => {

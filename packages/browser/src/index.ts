@@ -16,8 +16,9 @@ import {
 } from './events.js';
 import { traceFetch, traceXhr } from './fetch.js';
 import { doneOnTab, nowOf, sessionOf, tabOf } from './session.js';
+import { createPayloads, payloadsEndpoint } from './payloads.js';
 import { createTransport } from './transport.js';
-import { traceTools } from './webmcp.js';
+import { traceTools, type ToolContext } from './webmcp.js';
 import { BROWSER_EVENT_KINDS, type Fingerprint, type Page } from './wire.js';
 
 /**
@@ -25,7 +26,9 @@ import { BROWSER_EVENT_KINDS, type Fingerprint, type Page } from './wire.js';
  * an agent driving a browser takes, sent to the collector with the browser
  * source's public key. The proofs come first and need no consent: the
  * session the edge set, a trace on every first-party call, the markers a
- * page was reached by, and the page's WebMCP tool calls. Behaviour (raw,
+ * page was reached by, and the page's WebMCP tool calls (which tool, how it
+ * ended, the size of what went in and out; their content only where the
+ * site turns payload capture on). Behaviour (raw,
  * timing only) and the fingerprint are loaded apart, and each is off unless
  * the site turns it on: the fingerprint only once the visitor has consented.
  * Nothing is read of what is typed, pasted or chosen, nor of the DOM.
@@ -35,6 +38,10 @@ export {
   BrowserCollectorRefusedError,
   BrowserCollectorUnavailableError,
 } from './transport.js';
+export {
+  BrowserPayloadBudgetError,
+  type BrowserPayloadCall,
+} from './payloads.js';
 export {
   BROWSER_EVENT_KINDS,
   KEY_CLASSES,
@@ -50,6 +57,21 @@ export {
 /** The script was started twice on one page: the second would double every step. */
 export class BrowserAlreadyStartedError extends Error {
   override readonly name = 'BrowserAlreadyStartedError';
+}
+
+/** The site's payload redact hook threw: the run went without its content. */
+export class BrowserPayloadRedactError extends Error {
+  override readonly name = 'BrowserPayloadRedactError';
+}
+
+/** A WebMCP tool run as the redact hook sees it, before anything leaves the page. */
+export interface WebMcpPayload {
+  /** Null where the name is not one the collector keeps. */
+  readonly tool: string | null;
+  /** The arguments as the tool was given them. */
+  readonly arguments: unknown;
+  /** Undefined where the tool threw. */
+  readonly result: unknown;
 }
 
 export interface BrowserOptions {
@@ -82,6 +104,17 @@ export interface BrowserOptions {
    * a visitor who has consented to it.
    */
   readonly fingerprint?: boolean;
+  /**
+   * WebMCP tool arguments and results, off unless set (and only from this
+   * API: a tag cannot carry a function). Each run goes to `redact` first;
+   * what it returns goes, as JSON text, to the collector's
+   * `POST /ingest/browser/payloads`; null sends the run without content.
+   */
+  readonly capturePayloads?: {
+    redact(
+      payload: WebMcpPayload,
+    ): { readonly arguments: unknown; readonly result: unknown } | null;
+  };
   /**
    * Told of every call the collector refused or never got, and of a part
    * that failed to load. Warned on the page's console unless given.
@@ -141,21 +174,24 @@ export function start(options: BrowserOptions): Agentrail {
   const undo: (() => void)[] = [];
   let stopped = false;
   let beforeSend = (): void => undefined;
+  const component = {
+    name: 'agentrail-browser',
+    version: VERSION,
+    surfaces: ['browser' as const],
+  };
+  // Taken before it is wrapped: the script's own calls carry no trace.
+  const send = window.fetch.bind(window);
+  const beacon =
+    typeof navigator.sendBeacon === 'function'
+      ? navigator.sendBeacon.bind(navigator)
+      : null;
   const transport = createTransport({
     endpoint: options.collector,
     key: options.key,
     tab,
-    component: {
-      name: 'agentrail-browser',
-      version: VERSION,
-      surfaces: ['browser'],
-    },
-    // Taken before it is wrapped: the script's own calls carry no trace.
-    fetch: window.fetch.bind(window),
-    beacon:
-      typeof navigator.sendBeacon === 'function'
-        ? navigator.sendBeacon.bind(navigator)
-        : null,
+    component,
+    fetch: send,
+    beacon,
     onError: (error) => {
       onError(error);
     },
@@ -166,6 +202,55 @@ export function start(options: BrowserOptions): Agentrail {
   const record = (event: AgentrailEvent) => {
     transport.event(event);
   };
+  const capture = options.capturePayloads;
+  const payloads =
+    capture === undefined
+      ? null
+      : createPayloads({
+          endpoint: payloadsEndpoint(options.collector),
+          key: options.key,
+          tab,
+          component,
+          fetch: send,
+          beacon,
+          onError: (error) => {
+            onError(error);
+          },
+          alone: record,
+        });
+  const ran: ToolContext['ran'] =
+    capture === undefined || payloads === null
+      ? undefined
+      : (event, run) => {
+          let payload: {
+            request: string | null;
+            response: string | null;
+          } | null;
+          try {
+            const redacted = capture.redact(run);
+            payload =
+              redacted === null
+                ? null
+                : {
+                    request: serialised(redacted.arguments),
+                    response: serialised(redacted.result),
+                  };
+          } catch (error) {
+            // The site's own hook, or what it returned (a cycle, a BigInt):
+            // told, never thrown into the tool's caller, and the run still
+            // goes, without content.
+            onError(
+              new BrowserPayloadRedactError(
+                'The capturePayloads redact hook threw, or returned what JSON cannot hold; the tool run was sent without its content.',
+                { cause: error },
+              ),
+            );
+            record(event);
+            return;
+          }
+          if (payload === null) record(event);
+          else payloads.send(event, payload.request, payload.response);
+        };
 
   // The page view: a trace of its own, every step on the page under it.
   let page: { id: string; span: SpanContext } = { id: '', span: newSpan() };
@@ -227,7 +312,13 @@ export function start(options: BrowserOptions): Agentrail {
   };
   undo.push(traceFetch(window, calls), traceXhr(window, calls));
   undo.push(
-    traceTools(window, { recorder, page: () => page.span, now, record }),
+    traceTools(window, {
+      recorder,
+      page: () => page.span,
+      now,
+      record,
+      ...(ran === undefined ? {} : { ran }),
+    }),
   );
 
   /** A part loaded apart that failed: told, never thrown into the page. */
@@ -282,10 +373,14 @@ export function start(options: BrowserOptions): Agentrail {
           .catch(told);
 
   // A page being hidden may never come back: what is queued goes as a beacon.
+  // A hidden page's fetches go on, its payloads' too; a closing page's
+  // payload still on its way goes first, and what it cannot carry joins the
+  // queue as events alone.
   const onHidden = () => {
     if (document.visibilityState === 'hidden') transport.send('beacon');
   };
   const onPageHide = () => {
+    payloads?.close();
     transport.send('beacon');
   };
   document.addEventListener('visibilitychange', onHidden);
@@ -306,11 +401,24 @@ export function start(options: BrowserOptions): Agentrail {
       stopped = true;
       for (const restore of undo.reverse()) restore();
       undo.length = 0;
+      // A run whose payload is still on its way goes as its event alone,
+      // before the queue it joins stops.
+      payloads?.release();
       transport.send('fetch');
       transport.stop();
       started.delete(window);
     },
   };
+}
+
+/**
+ * A redacted value's JSON text; null where there is none to send. A cycle
+ * or a BigInt throws, to the redact hook's failure.
+ */
+function serialised(value: unknown): string | null {
+  // Undefined, a function, a symbol, or a toJSON that gives undefined.
+  const text: unknown = JSON.stringify(value);
+  return typeof text === 'string' ? text : null;
 }
 
 /** The status the page's own document came with, where the browser tells it. */

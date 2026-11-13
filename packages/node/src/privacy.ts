@@ -6,7 +6,7 @@ import { millisToHrTime } from '@opentelemetry/core';
 import type { ReadableSpan } from '@opentelemetry/sdk-trace';
 import type { ReadableLogRecord } from '@opentelemetry/sdk-logs';
 import type { LogAttributes, SeverityNumber } from '@opentelemetry/api-logs';
-import type { Runtime } from './runtime.js';
+import type { McpFacts, Runtime } from './runtime.js';
 
 export interface StructuredLog {
   readonly severityNumber?: SeverityNumber;
@@ -91,10 +91,12 @@ export function copySpan(
     original['url.full'] ?? original['http.url'] ?? incomingUrl,
   );
   if (url !== undefined) attrs['url.full'] = url;
+  // An MCP handler inside its transport span is neither a step nor an entry:
+  // the transport span is the call.
+  const mark = metadata.mark?.step === false ? undefined : metadata.mark;
+  const step = mark !== undefined;
   const entry =
-    metadata.mark !== undefined ||
-    span.kind === SpanKind.SERVER ||
-    span.kind === SpanKind.CONSUMER;
+    step || span.kind === SpanKind.SERVER || span.kind === SpanKind.CONSUMER;
   if (entry)
     Object.assign(attrs, metadata.mark?.identity ?? metadata.state.identity);
   if (entry && metadata.state.location) {
@@ -107,11 +109,11 @@ export function copySpan(
   }
   if (span.kind === SpanKind.SERVER)
     attrs['agentrail.ingress.verified'] = metadata.state.verifiedIngress;
-  if (metadata.mark !== undefined)
+  if (mark !== undefined)
     Object.assign(attrs, {
       'agentrail.step': true,
-      'agentrail.step.surface': metadata.mark.surface,
-      'agentrail.step.kind': metadata.mark.kind,
+      'agentrail.step.surface': mark.surface,
+      'agentrail.step.kind': mark.kind,
     });
   if (metadata.mark?.performance !== undefined)
     Object.assign(attrs, metadata.mark.performance);
@@ -134,6 +136,8 @@ export function copySpan(
     if (mcp.protocol !== undefined)
       attrs['agentrail.mcp.protocol.version'] = boundedText(mcp.protocol, 64);
   }
+  const facts = metadata.mark?.mcpFacts;
+  if (facts !== undefined) Object.assign(attrs, mcpAttributes(facts));
   const parent = span.parentSpanContext;
   return {
     name: boundedText(
@@ -165,6 +169,64 @@ export function copySpan(
     droppedEventsCount: 0,
     droppedLinksCount: 0,
   };
+}
+/** A method the collector keeps; any other is named only in the span name. */
+const MCP_METHOD = /^[A-Za-z0-9_./-]{1,128}$/u;
+function mcpAttributes(facts: McpFacts): Attributes {
+  const attrs: Attributes = { 'agentrail.mcp.layer': facts.layer };
+  const optional = {
+    'agentrail.mcp.method': MCP_METHOD.test(facts.method)
+      ? facts.method
+      : undefined,
+    'agentrail.mcp.session.id_hash': facts.sessionHash,
+    'agentrail.mcp.request.bytes': facts.requestBytes,
+    'agentrail.mcp.response.bytes': facts.responseBytes,
+    'agentrail.mcp.jsonrpc.error_code': facts.errorCode,
+    'agentrail.mcp.result.is_error': facts.isError,
+    // JSON text after the application's redact hook, never bounded by the
+    // 4,096-character cap: the capture truncates it only to fit one export.
+    'agentrail.mcp.request.payload': facts.requestPayload,
+    'agentrail.mcp.response.payload': facts.responsePayload,
+    'agentrail.mcp.request.truncated': facts.requestTruncated,
+    'agentrail.mcp.response.truncated': facts.responseTruncated,
+  };
+  for (const [key, value] of Object.entries(optional))
+    if (value !== undefined) attrs[key] = value;
+  return attrs;
+}
+const PAYLOAD_ATTRIBUTES = [
+  'agentrail.mcp.request.payload',
+  'agentrail.mcp.response.payload',
+  'agentrail.mcp.request.truncated',
+  'agentrail.mcp.response.truncated',
+];
+/** The UTF-8 size of the MCP payload text an exported span holds. */
+export function payloadBytes(span: ReadableSpan): number {
+  let total = 0;
+  for (const key of PAYLOAD_ATTRIBUTES) {
+    const value = span.attributes[key];
+    if (typeof value === 'string') total += Buffer.byteLength(value);
+  }
+  return total;
+}
+/** The exported span without its MCP payloads. */
+export function withoutPayloads(span: ReadableSpan): ReadableSpan {
+  const attributes = { ...span.attributes };
+  for (const key of PAYLOAD_ATTRIBUTES) Reflect.deleteProperty(attributes, key);
+  return { ...span, attributes };
+}
+/**
+ * An upper estimate of an exported span's OTLP protobuf size: its text as
+ * UTF-8, and a generous allowance for each field's tag, length and value.
+ */
+export function estimatedBytes(span: ReadableSpan): number {
+  let total = 128 + Buffer.byteLength(span.name) + span.links.length * 64;
+  for (const [key, value] of Object.entries(span.attributes))
+    total +=
+      16 +
+      Buffer.byteLength(key) +
+      (typeof value === 'string' ? Buffer.byteLength(value) : 16);
+  return total;
 }
 /** Fit an already-sanitized string, including JSON escaping, without splitting a code point. */
 function fitLogText(value: string, budget: number): string {

@@ -16,6 +16,8 @@ export {
   type SpanContext,
   type SpanKind,
   type Surface,
+  type WebMcpOutcome,
+  type WebMcpRun,
 } from './event.js';
 export {
   MAX_LINK_INDEX,

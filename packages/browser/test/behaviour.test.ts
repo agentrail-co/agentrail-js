@@ -165,7 +165,7 @@ describe('the behaviour recorder', () => {
     }
     const beaconed = await Promise.all(
       site.beacons.map(
-        async (beacon) => JSON.parse(await beacon.text()) as BrowserCall,
+        async (beacon) => JSON.parse(await beacon.data.text()) as BrowserCall,
       ),
     );
 

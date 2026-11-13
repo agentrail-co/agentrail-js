@@ -9,6 +9,7 @@ interface Attribute {
 }
 export interface WireSpan {
   traceId: Buffer;
+  status?: { code?: number };
   spanId: Buffer;
   parentSpanId?: Buffer;
   name: string;
@@ -128,10 +129,13 @@ export async function collector(responses: readonly number[] = []) {
 
 export function attributesOf(
   attributes: readonly Attribute[] | undefined,
-): Record<string, string | boolean> {
+): Record<string, string | boolean | number> {
   return Object.fromEntries(
     (attributes ?? []).flatMap(({ key, value }) => {
-      const field = value.stringValue ?? value.boolValue;
+      const field =
+        value.stringValue ??
+        value.boolValue ??
+        (value.intValue === undefined ? undefined : Number(value.intValue));
       return field === undefined ? [] : [[key, field]];
     }),
   );

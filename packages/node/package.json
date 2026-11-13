@@ -1,6 +1,6 @@
 {
   "name": "agentrail-node",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Backend HTTP traces, structured logs and MCP journey context for Agentrail.",
   "license": "Apache-2.0",
   "repository": {
@@ -50,7 +50,8 @@
     "@opentelemetry/exporter-logs-otlp-proto": "0.221.0",
     "@opentelemetry/instrumentation": "0.221.0",
     "@opentelemetry/instrumentation-http": "0.221.0",
-    "@opentelemetry/instrumentation-undici": "0.31.0"
+    "@opentelemetry/instrumentation-undici": "0.31.0",
+    "eventsource-parser": "3.1.1"
   },
   "peerDependencies": {
     "pino": ">=9 <11",

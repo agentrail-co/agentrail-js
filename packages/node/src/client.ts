@@ -15,7 +15,7 @@ import {
 import { makeLog, type StructuredLog } from './privacy.js';
 import type { processors } from './processors.js';
 import { performanceAttributes } from './performance.js';
-import type { Runtime } from './runtime.js';
+import { registerInternal, type Mark, type Runtime } from './runtime.js';
 
 export interface AgentrailNode {
   identify(identity: VerifiedIdentity): void;
@@ -53,6 +53,7 @@ export function createClient(
     name: string,
     details: MilestoneContext,
     identity?: import('@opentelemetry/api').Attributes,
+    extra: Pick<Mark, 'step' | 'mcpFacts'> = {},
   ) {
     if (
       !name.isWellFormed() ||
@@ -88,6 +89,7 @@ export function createClient(
       ...(normalized === undefined ? {} : { performance: normalized }),
       name,
       ...(identity === undefined ? {} : { identity }),
+      ...extra,
     });
     const state = runtime.state(base);
     const span = trace.getTracer('agentrail-node').startSpan(
@@ -132,7 +134,7 @@ export function createClient(
       }
     });
   }
-  return {
+  const client: AgentrailNode = {
     identify(identity) {
       if (identity.id.length === 0 || identity.actingUserId === '')
         throw new ConfigurationError('Verified identity IDs cannot be empty.');
@@ -172,4 +174,9 @@ export function createClient(
       logs: queues.logs.diagnostics(),
     }),
   };
+  registerInternal(client, {
+    runtime,
+    start: (name, details, extra) => start(name, details, undefined, extra),
+  });
+  return client;
 }

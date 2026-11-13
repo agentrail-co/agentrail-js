@@ -9,6 +9,7 @@ import { UndiciInstrumentation } from '@opentelemetry/instrumentation-undici';
 import { createProcessors } from './index.js';
 import { ConfigurationError, type NodeOptions } from './options.js';
 import type { AgentrailNode } from './client.js';
+import { internalOf, registerInternal } from './runtime.js';
 
 let installed: { options: NodeOptions; client: AgentrailNode } | undefined;
 /** Call before loading application HTTP modules. Use createProcessors when another OTel provider owns startup. */
@@ -84,6 +85,8 @@ export function init(options: NodeOptions): Promise<AgentrailNode> {
       return stopping;
     },
   };
+  // The MCP adapter finds the runtime through the client it is given.
+  registerInternal(client, internalOf(sdk.client));
   installed = { options, client };
   return Promise.resolve(client);
 }

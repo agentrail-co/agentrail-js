@@ -1,4 +1,9 @@
-import { newId, type AgentrailEvent, type SpanContext } from 'agentrail-core';
+import {
+  newId,
+  type AgentrailEvent,
+  type SpanContext,
+  type WebMcpRun,
+} from 'agentrail-core';
 
 import { BROWSER_EVENT_KINDS } from './wire.js';
 
@@ -51,12 +56,11 @@ export function markersOf(url: URL): string[] {
   return prefix === undefined ? seen : [...seen, prefix];
 }
 
-/** The markers in URLs anywhere in a value, as text; the value is not kept. */
-export function markersIn(value: unknown): string[] {
-  // A tool given no arguments has none to read; what WebMCP hands a tool is
-  // otherwise JSON.
-  if (value === undefined) return [];
-  const text = JSON.stringify(value);
+/**
+ * The markers in URLs anywhere in a text, as a tool's arguments' JSON holds
+ * them; the text is not kept.
+ */
+export function markersInText(text: string): string[] {
   return [...text.matchAll(MARKER_IN_TEXT)].flatMap((match) =>
     match[1] === undefined ? [] : [match[1]],
   );
@@ -74,6 +78,8 @@ interface Step {
   readonly method: string;
   readonly status: number | null;
   readonly seen: readonly string[];
+  /** A WebMCP tool run's facts. */
+  readonly webmcp?: WebMcpRun;
 }
 
 export function browserEvent(recorder: Recorder, step: Step): AgentrailEvent {
@@ -122,6 +128,7 @@ export function browserEvent(recorder: Recorder, step: Step): AgentrailEvent {
     principal: null,
     registration: null,
     markers: { served: [], seen: [...step.seen] },
+    ...(step.webmcp === undefined ? {} : { webmcp: step.webmcp }),
     redactions:
       recorded?.dropped === true
         ? [{ field: 'http.path', reason: 'query_outside_allowlist' }]

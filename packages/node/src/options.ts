@@ -92,7 +92,11 @@ export type CaptureCode =
   | 'entry_not_recording'
   | 'location_failed'
   | 'identity_outside_request'
-  | 'invalid_performance';
+  | 'invalid_performance'
+  /** MCP payloads past the queue's payload memory budget: the span went without them. */
+  | 'payload_budget'
+  /** The application's MCP payload redact hook threw: the span went without payloads. */
+  | 'payload_redact_failed';
 export class CaptureError extends Error {
   override readonly name = 'AgentrailCaptureError';
   constructor(

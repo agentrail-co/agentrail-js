@@ -14,6 +14,7 @@ import { fullFormats } from 'ajv-formats/dist/formats.js';
 interface Contract {
   readonly ingestRequest: IngestRequestSchema;
   readonly browserCall: object;
+  readonly browserPayloadCall: object;
   readonly markers: Markers;
   readonly traceHandoff: TraceHandoffContract;
   readonly otlp: OtlpContract;
@@ -38,8 +39,71 @@ export interface OtlpContract {
   readonly traces: { readonly path: string; readonly messageType: string };
   readonly logs: { readonly path: string; readonly messageType: string };
   readonly resourceAttributes: Readonly<Record<string, string>>;
-  readonly spanAttributes: Readonly<Record<string, string>>;
+  readonly spanAttributes: Readonly<
+    Record<
+      | 'verifiedIdentity'
+      | 'principalKind'
+      | 'principalHash'
+      | 'actingUserHash'
+      | 'clientAddressHash'
+      | 'explicitStep'
+      | 'stepSurface'
+      | 'stepKind'
+      | 'verifiedIngress'
+      | 'operationNamespace'
+      | 'operationHash'
+      | 'performanceEnvironment'
+      | 'workflowRole'
+      | 'workflowEventName'
+      | 'pluginBinding'
+      | 'pluginInvocation',
+      string
+    >
+  >;
   readonly logAttributes: Readonly<Record<string, string>>;
+  /** The MCP attributes the collector reads, by role. */
+  readonly mcpAttributes: Readonly<
+    Record<
+      | 'layer'
+      | 'method'
+      | 'sessionHash'
+      | 'errorCode'
+      | 'isError'
+      | 'requestBytes'
+      | 'responseBytes'
+      | 'requestPayload'
+      | 'responsePayload'
+      | 'requestTruncated'
+      | 'responseTruncated'
+      | 'clientName'
+      | 'clientVersion'
+      | 'protocolVersion',
+      string
+    >
+  >;
+  /** What an MCP span is, in words: its name, layers, error types, sizes, session and payloads. */
+  readonly mcpSpans: Readonly<
+    Record<
+      | 'name'
+      | 'transport'
+      | 'errorTypes'
+      | 'handler'
+      | 'sizes'
+      | 'session'
+      | 'payloads',
+      string
+    >
+  >;
+  readonly limits: {
+    readonly bodyBytes: number;
+    readonly records: number;
+    readonly recordIdCharacters: number;
+    readonly selectedTextCharacters: number;
+    /** A span's two MCP payloads together, UTF-8, at most. */
+    readonly mcpPayloadBytes: number;
+    /** An SDK closes an export batch before its size passes this. */
+    readonly exportBatchBytes: number;
+  };
   readonly fixtures: {
     readonly accepted: readonly {
       readonly name: string;
@@ -49,6 +113,9 @@ export interface OtlpContract {
         readonly spans: number;
         readonly events: readonly unknown[];
         readonly logs: readonly unknown[];
+        /** What the collector reads of each MCP transport span. */
+        readonly mcp?: readonly McpCallFacts[];
+        readonly payloads?: readonly (McpPayloadFacts | null)[];
       };
     }[];
     readonly refused: readonly {
@@ -57,6 +124,21 @@ export interface OtlpContract {
       readonly request: unknown;
     }[];
   };
+}
+
+export interface McpCallFacts {
+  readonly layer: 'transport' | 'handler';
+  readonly method: string;
+  readonly errorCode: number | null;
+  readonly isError: boolean | null;
+  readonly requestBytes: number | null;
+  readonly responseBytes: number | null;
+}
+export interface McpPayloadFacts {
+  readonly request: string | null;
+  readonly response: string | null;
+  readonly requestTruncated: boolean;
+  readonly responseTruncated: boolean;
 }
 
 /** The part of the ingest body's schema a test reads directly. */
@@ -138,6 +220,12 @@ export const checkIngestRequest = checker(
 export const checkBrowserCall = checker(
   ajv.compile(contract.browserCall),
   'POST /ingest/browser',
+);
+
+/** Throws unless `POST /ingest/browser/payloads` takes `body`. */
+export const checkBrowserPayloadCall = checker(
+  ajv.compile(contract.browserPayloadCall),
+  'POST /ingest/browser/payloads',
 );
 
 /** The surfaces the collector takes, in its order. */

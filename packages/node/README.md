@@ -10,9 +10,17 @@ when an agent or a person reaches it: the requests it answers and the HTTP and
 you name, your logs and your MCP tool calls. [Agentrail](https://www.agentrail.co)
 links these steps with the ones your edge and pages record, into one journey.
 
-Bodies, arguments, results, headers and raw identities never leave your
-process. The same features are in the [Go](https://github.com/agentrail-co/agentrail-go)
-and [Python](https://github.com/agentrail-co/agentrail-python) SDKs.
+What leaves your process is each step's facts: a request's method, route,
+status, user agent and URL (its query dropped, but for Agentrail's own
+markers); an MCP call's method, tool or prompt name, resource URI (without its
+userinfo, query or fragment), the client's self-reported name and version,
+message sizes and JSON-RPC error code; and identities only as keyed hashes.
+Request and response bodies, other headers and raw identities never leave it.
+MCP tool arguments and results are not exported unless you turn on
+`capturePayloads`, and then only as your `redact` hook returns them. The same
+features are in the
+[Go](https://github.com/agentrail-co/agentrail-go) and
+[Python](https://github.com/agentrail-co/agentrail-python) SDKs.
 
 ## Install
 
@@ -70,6 +78,69 @@ process.on('SIGTERM', () => {
   server.close(() => void agentrail.shutdown());
 });
 ```
+
+## MCP servers
+
+`agentrail-node/mcp` records every JSON-RPC message your MCP server receives
+(`initialize`, `tools/list`, `tools/call`, notifications, and requests the SDK
+refuses) as one step, through public APIs only: nothing is patched.
+
+```ts
+import { createMcpHandler, McpServer } from '@modelcontextprotocol/server';
+import { mcp } from 'agentrail-node/mcp';
+
+const capture = mcp({ client: agentrail });
+
+// A handler from createMcpHandler: serve the wrapped one in its place.
+export const handler = capture.handler(
+  createMcpHandler(() => {
+    const server = new McpServer({ name: 'orders', version: '1' });
+    server.registerTool(
+      'find_order',
+      { inputSchema },
+      capture.tool('find_order', findOrder),
+    );
+    return server;
+  }),
+);
+
+// A transport you own: connect the wrapped one.
+await server.connect(capture.transport(transport));
+```
+
+If you create the handler with a larger `maxRequestBodySize` than
+`createMcpHandler`'s 4 MiB default, give the wrapper the same value, or bodies
+past 4 MiB are served without a step:
+`capture.handler(createMcpHandler(factory, { maxRequestBodySize }), { maxRequestBodySize })`.
+
+Each call carries its method and name, the client's self-reported name,
+version and protocol, the keyed hash of its `Mcp-Session-Id` (none for a
+stateless server), the size of the request and response as JSON, and its
+JSON-RPC error code or `isError` result. `capture.tool`, `capture.resource`
+and `capture.prompt` add the handler's own span inside the call, so a call is
+counted once; on their own, without a wrapped transport, each is the step.
+
+Payloads are off by default. To send them, redact first; returning `null`
+sends neither:
+
+```ts
+const capture = mcp({
+  client: agentrail,
+  capturePayloads: {
+    redact: ({ method, name, request, response }) =>
+      name === 'find_order'
+        ? { request, response: redactOrder(response) }
+        : null,
+  },
+});
+```
+
+A payload is sent as JSON text with no length limit of its own, except that a
+call's two payloads together are cut to 14 MiB of UTF-8 (the longer first, on a
+character boundary, and flagged as truncated), so one call always fits an
+export. At most 64 MiB of payload text waits to be sent: past that, calls go
+without their payloads and `onError` is told (`payload_budget`), as it is when
+`redact` throws or returns what JSON cannot hold (`payload_redact_failed`).
 
 ## Documentation
 

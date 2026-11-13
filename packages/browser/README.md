@@ -56,6 +56,9 @@ start({
 });
 ```
 
+Capture preserves the tool's result even when inspecting a getter or
+serializing that result fails.
+
 A run whose payload call fails, takes longer than 25 s, or would put more than
 64 MiB of payloads on their way at once is still sent, without its payload,
 and `onError` is told. A closing

@@ -549,26 +549,16 @@ export function mcp(options: McpCaptureOptions) {
     )
       rest();
     else if (type.includes('text/event-stream')) {
-      // A tee'd copy: the client's copy is never delayed or changed. A tee
-      // cancels its source only once both copies are, so the client's copy
-      // lets go of this one too.
-      const [delivered, copy] = body.tee();
-      const reader = copy.pipeThrough(new TextDecoderStream()).getReader();
-      const abandon = () => {
-        reader.cancel().catch(ended);
-      };
-      void events(
-        reader,
-        request.signal,
-        answered,
-        abandon,
-        () => waiting.size === 0,
-      ).then(rest);
-      return new Response(following(delivered, abandon), {
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-      });
+      // Observe only the chunks the client requests. Draining a tee'd copy
+      // would buffer the entire response behind a slow or paused client.
+      return new Response(
+        events(body, request.signal, answered, rest, () => waiting.size === 0),
+        {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        },
+      );
     } else if (type.includes('json'))
       void response
         .clone()
@@ -738,63 +728,60 @@ export function mcp(options: McpCaptureOptions) {
   };
 }
 
-/**
- * The client's copy of a stream, as it came; cancelling it lets go of the
- * other copy too (`abandon`).
- */
-function following(
+/** Observe SSE as the client reads it, preserving its chunks and backpressure. */
+function events(
   source: ReadableStream<Uint8Array>,
-  abandon: () => void,
-): ReadableStream<Uint8Array> {
-  const reader = source.getReader();
-  return new ReadableStream<Uint8Array>(
-    {
-      async pull(controller) {
-        const chunk = await reader.read();
-        if (chunk.done) controller.close();
-        else controller.enqueue(chunk.value);
-      },
-      cancel(reason) {
-        abandon();
-        return reader.cancel(reason);
-      },
-    },
-    { highWaterMark: 0 },
-  );
-}
-/**
- * Feeds each JSON message of an SSE copy to `answered`, until `done`, the
- * request is gone or the copy is let go of.
- */
-async function events(
-  reader: ReadableStreamDefaultReader<string>,
   signal: AbortSignal,
   answered: (value: unknown) => void,
-  abandon: () => void,
+  rest: () => void,
   done: () => boolean,
-): Promise<void> {
+): ReadableStream<Uint8Array> {
+  const reader = source.getReader();
+  const decoder = new TextDecoder();
   const parser = createParser({
     onEvent: (event) => {
       answered(parseJson(event.data));
     },
   });
-  signal.addEventListener('abort', abandon, { once: true });
-  try {
-    while (!done()) {
-      let chunk: ReadableStreamReadResult<string>;
-      try {
-        chunk = await reader.read();
-      } catch (error) {
-        ended(error);
-        return;
-      }
-      if (chunk.done) return;
-      parser.feed(chunk.value);
-    }
-    abandon();
-  } finally {
-    signal.removeEventListener('abort', abandon);
-  }
+  let observing = true;
+  const finish = () => {
+    if (!observing) return;
+    observing = false;
+    parser.reset();
+    signal.removeEventListener('abort', finish);
+    rest();
+  };
+  signal.addEventListener('abort', finish, { once: true });
+  if (signal.aborted) finish();
+  return new ReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        let chunk: ReadableStreamReadResult<Uint8Array>;
+        try {
+          chunk = await reader.read();
+        } catch (error) {
+          // End unfinished calls and preserve the source's exact rejection.
+          finish();
+          throw error;
+        }
+        if (chunk.done) {
+          finish();
+          controller.close();
+        } else {
+          if (observing) {
+            parser.feed(decoder.decode(chunk.value, { stream: true }));
+            if (done()) finish();
+          }
+          controller.enqueue(chunk.value);
+        }
+      },
+      cancel(reason) {
+        finish();
+        return reader.cancel(reason);
+      },
+    },
+    { highWaterMark: 0 },
+  );
 }
 /** The stream failed (the client went away): the calls left end without a response. */
 function ended(error: unknown): void {

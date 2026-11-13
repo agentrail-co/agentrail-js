@@ -120,6 +120,9 @@ JSON-RPC error code or `isError` result. `capture.tool`, `capture.resource`
 and `capture.prompt` add the handler's own span inside the call, so a call is
 counted once; on their own, without a wrapped transport, each is the step.
 
+For SSE responses, capture observes chunks as the client reads them,
+preserving backpressure. Cancelling the response body ends unfinished calls.
+
 Payloads are off by default. To send them, redact first; returning `null`
 sends neither:
 

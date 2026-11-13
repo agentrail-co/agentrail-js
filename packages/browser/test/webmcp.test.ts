@@ -261,6 +261,46 @@ describe('WebMCP runs, as a good guest of the page', () => {
       ? new Promise<Response>(() => undefined)
       : new Response('{}', { status: 200 });
 
+  // Fails if inspecting isError lets a page's getter or Proxy replace a
+  // successful tool result with an exception.
+  it.each(['getter', 'proxy'] as const)(
+    'preserves a successful result with a throwing isError %s',
+    async (variant) => {
+      const tools = webmcp();
+      const site = onPage(quiet);
+      const value = { ok: true };
+      const result =
+        variant === 'getter'
+          ? Object.defineProperty(value, 'isError', {
+              get() {
+                throw new Error('Synthetic isError getter failure.');
+              },
+            })
+          : new Proxy(value, {
+              get(target, property, receiver) {
+                if (property === 'isError')
+                  throw new Error('Synthetic isError Proxy failure.');
+                const field: unknown = Reflect.get(target, property, receiver);
+                return field;
+              },
+            });
+      tools.give('awkward', () => Promise.resolve(result));
+
+      await expect(tools.run('awkward', {})).resolves.toBe(result);
+      const runs = (await site.sent())
+        .flatMap((call) => call.events)
+        .filter((event) => event.kind === 'agent.tool.executed');
+      expect(runs.map((run) => run.webmcp)).toEqual([
+        {
+          tool: 'awkward',
+          outcome: 'answered',
+          argumentBytes: 2,
+          resultBytes: 11,
+        },
+      ]);
+    },
+  );
+
   // Fails if someone lets sizing a run throw into the tool's caller: a
   // page's own throwing toJSON would replace the tool's answer.
   it('never lets sizing a run fail the tool', async () => {

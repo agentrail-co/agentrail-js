@@ -763,6 +763,90 @@ describe('MCP handler capture, as a good guest of the handler', () => {
     }
   });
 
+  // Fails if capture drains an SSE copy ahead of its client, leaving the
+  // unread response buffered, or stops capturing the eventual tool answer.
+  it('observes SSE only as its client reads, preserving chunks and the tool outcome', async () => {
+    const h = await harness({ redact: (payload) => payload });
+    let response: Response | undefined;
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    try {
+      const answer = {
+        jsonrpc: '2.0',
+        id: 1,
+        result: { isError: true, content: [{ type: 'text', text: 'é😀' }] },
+      };
+      const encoded = encoder.encode(
+        `event: message\ndata: ${JSON.stringify(answer)}\n\n`,
+      );
+      // Split within the final multi-byte character to exercise incremental decoding.
+      const chunks = [
+        encoder.encode(
+          'event: message\ndata: {"jsonrpc":"2.0","method":"notifications/progress","params":{"progress":1}}\n\n',
+        ),
+        encoded.subarray(0, encoded.byteLength - 8),
+        encoded.subarray(encoded.byteLength - 8),
+      ];
+      let pulled = 0;
+      const source = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            const chunk = chunks[pulled];
+            if (chunk === undefined) controller.close();
+            else {
+              pulled += 1;
+              controller.enqueue(chunk);
+            }
+          },
+        },
+        { highWaterMark: 0 },
+      );
+      const inner: Pick<McpHttpHandler, 'fetch'> = {
+        fetch: () =>
+          Promise.resolve(
+            new Response(source, {
+              status: 202,
+              headers: { 'content-type': 'text/event-stream' },
+            }),
+          ),
+      };
+      response = await h.capture.handler(inner).fetch(
+        new Request(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'tools/call',
+            params: { name: 'synthetic_tool' },
+          }),
+        }),
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(pulled).toBe(0);
+      expect(response.status).toBe(202);
+      reader = response.body?.getReader();
+      expect(reader).toBeDefined();
+      for (const [index, chunk] of chunks.entries()) {
+        expect(await reader?.read()).toEqual({ done: false, value: chunk });
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(pulled).toBe(index + 1);
+      }
+      await h.sdk.client.flush();
+      const spans = h.transportSpans();
+      expect(spans).toHaveLength(1);
+      expect(attributesOf(spans[0]?.attributes)).toMatchObject({
+        [A.isError]: true,
+        [A.responsePayload]: JSON.stringify(answer.result),
+        'error.type': 'tool_error',
+      });
+      expect(await reader?.read()).toEqual({ done: true, value: undefined });
+    } finally {
+      if (reader === undefined) await response?.body?.cancel();
+      else await reader.cancel();
+      await h.close();
+    }
+  });
+
   // Fails if someone reads a subscriptions/listen stream: the call would
   // stay open, and its stream held, for as long as the client listens.
   it('never reads a subscriptions/listen stream, and ends its call at once', async () => {

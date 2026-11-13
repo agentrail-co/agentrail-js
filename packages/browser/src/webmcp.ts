@@ -70,10 +70,19 @@ export function jsonOf(value: unknown): string | null {
 }
 const bytesOf = (text: string | null) =>
   text === null ? null : encoder.encode(text).byteLength;
-const saidItFailed = (result: unknown) =>
-  typeof result === 'object' &&
-  result !== null &&
-  Reflect.get(result, 'isError') === true;
+function saidItFailed(result: unknown): boolean {
+  try {
+    return (
+      typeof result === 'object' &&
+      result !== null &&
+      Reflect.get(result, 'isError') === true
+    );
+  } catch {
+    // The page's getter or Proxy can throw anything. Inspecting its result
+    // must never replace a successful answer with that capture failure.
+    return false;
+  }
+}
 
 function isTool(value: unknown): value is Tool {
   return (

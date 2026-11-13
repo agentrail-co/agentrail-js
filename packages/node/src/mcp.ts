@@ -61,8 +61,12 @@ interface Call {
 const callsKey = createContextKey('agentrail.mcp.calls');
 const CLIENT_INFO = 'io.modelcontextprotocol/clientInfo';
 const PROTOCOL_VERSION = 'io.modelcontextprotocol/protocolVersion';
-/** The most of a request body the handler wrapper reads to see its messages. */
-const MAX_INSPECTED_BYTES = 16 * 1024 * 1024;
+/**
+ * The most of a request body the handler wrapper reads to see its messages:
+ * createMcpHandler's own default (`DEFAULT_MAX_REQUEST_BODY_SIZE`), past
+ * which it refuses the body unread.
+ */
+const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
 
 function record(value: unknown): Message | undefined {
   return typeof value === 'object' && value !== null
@@ -92,6 +96,11 @@ function jsonOf(value: unknown): string | undefined {
   const text: string | undefined = JSON.stringify(value);
   return text;
 }
+/** A value as JSON gives it back; undefined where JSON cannot hold it. */
+function copyOf(value: unknown): unknown {
+  const text = jsonText(value);
+  return text === undefined ? undefined : JSON.parse(text);
+}
 function jsonBytes(value: unknown): number | undefined {
   const text = jsonText(value);
   return text === undefined ? undefined : Buffer.byteLength(text);
@@ -104,10 +113,22 @@ function parseJson(text: string): unknown {
     throw error;
   }
 }
+/**
+ * A resource URI as a span names it: without its query and fragment, nor the
+ * userinfo of its authority, which can carry credentials. Cut as text, so
+ * the rest stays as the client wrote it.
+ */
+function resourceName(uri: string): string {
+  const bare = uri.replace(/[?#].*$/su, '');
+  return bare.replace(/^([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^/]*@/u, '$1');
+}
 function nameOf(method: string, params: Message | undefined): string | null {
+  const uri = params?.uri;
   const name =
     method === 'resources/read'
-      ? params?.uri
+      ? typeof uri === 'string'
+        ? resourceName(uri)
+        : undefined
       : method === 'tools/call' || method === 'prompts/get'
         ? params?.name
         : undefined;
@@ -210,9 +231,28 @@ function fitted(
     } else facts.responsePayload = response;
   return facts;
 }
-/** Reads a request body copy, up to a bound; undefined past it or when it cannot be read. */
-async function bodyText(request: Request): Promise<string | undefined> {
-  const copy = request.bodyUsed ? null : request.clone().body;
+/** A JSON media type, as createMcpHandler takes one. */
+function isJson(type: string | null): boolean {
+  const media = (type ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
+  return media === 'application/json' || media.endsWith('+json');
+}
+/**
+ * Reads a copy of a body the handler would read too, up to its bound;
+ * undefined for one it refuses unread (not JSON, or declared too large),
+ * past the bound, or when it cannot be read.
+ */
+async function bodyText(
+  request: Request,
+  limit: number,
+): Promise<string | undefined> {
+  const declared = Number(request.headers.get('content-length') ?? 0);
+  if (
+    !isJson(request.headers.get('content-type')) ||
+    !(declared <= limit) ||
+    request.bodyUsed
+  )
+    return undefined;
+  const copy = request.clone().body;
   if (copy === null) return undefined;
   const reader = copy.getReader();
   const chunks: Uint8Array[] = [];
@@ -222,8 +262,10 @@ async function bodyText(request: Request): Promise<string | undefined> {
       const { done, value } = await reader.read();
       if (done) return Buffer.concat(chunks).toString('utf8');
       total += value.byteLength;
-      if (total > MAX_INSPECTED_BYTES) {
-        await reader.cancel();
+      if (total > limit) {
+        // Not awaited: a tee'd copy's cancel settles only once the other
+        // copy, the handler's, is done too.
+        reader.cancel().catch(ended);
         return undefined;
       }
       chunks.push(value);
@@ -292,11 +334,13 @@ export function mcp(options: McpCaptureOptions) {
     let request: string | undefined;
     let result: string | undefined;
     try {
+      // Copies, so a hook that redacts in place never changes the real
+      // request or the answer the client is about to get.
       const redacted = hook.redact({
         method: call.method,
         name: call.name,
-        request: call.params,
-        response,
+        request: copyOf(call.params),
+        response: copyOf(response),
       });
       if (redacted === null) return;
       request = jsonOf(redacted.request);
@@ -447,11 +491,12 @@ export function mcp(options: McpCaptureOptions) {
     });
   }
 
+  /** Ends each call as its answer comes; returns the response to serve. */
   function observe(
     request: Request,
     response: Response,
     calls: readonly Call[],
-  ): void {
+  ): Response {
     // Only an id the server issued; one a request alone carried is not a session.
     const session = response.headers.get('mcp-session-id');
     const waiting = new Map<string, Call>();
@@ -460,7 +505,7 @@ export function mcp(options: McpCaptureOptions) {
       if (key === undefined) finish(call, undefined, session);
       else waiting.set(key, call);
     }
-    if (waiting.size === 0) return;
+    if (waiting.size === 0) return response;
     // Left without a JSON-RPC answer: refused, where the status says so.
     const rest = () => {
       for (const call of waiting.values()) {
@@ -491,16 +536,36 @@ export function mcp(options: McpCaptureOptions) {
       }
     };
     const type = response.headers.get('content-type') ?? '';
-    if (response.body === null) rest();
-    else if (type.includes('text/event-stream'))
-      // A tee'd copy: the client's copy is never delayed or changed.
+    const { body } = response;
+    // A subscriptions/listen stream lasts as long as the client listens:
+    // never read, so nothing here holds its subscription open.
+    if (
+      body === null ||
+      calls.some((call) => call.method === 'subscriptions/listen')
+    )
+      rest();
+    else if (type.includes('text/event-stream')) {
+      // A tee'd copy: the client's copy is never delayed or changed. A tee
+      // cancels its source only once both copies are, so the client's copy
+      // lets go of this one too.
+      const [delivered, copy] = body.tee();
+      const reader = copy.pipeThrough(new TextDecoderStream()).getReader();
+      const abandon = () => {
+        reader.cancel().catch(ended);
+      };
       void events(
-        response.clone(),
+        reader,
         request.signal,
         answered,
+        abandon,
         () => waiting.size === 0,
       ).then(rest);
-    else if (type.includes('json'))
+      return new Response(following(delivered, abandon), {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    } else if (type.includes('json'))
       void response
         .clone()
         .text()
@@ -509,6 +574,7 @@ export function mcp(options: McpCaptureOptions) {
         }, ended)
         .then(rest);
     else rest();
+    return response;
   }
 
   /** Wraps what `createMcpHandler` returns; serve the result in its place. */
@@ -519,7 +585,14 @@ export function mcp(options: McpCaptureOptions) {
         options?: McpHandlerRequestOptions,
       ) => Promise<Response>;
     },
-  >(inner: H): H {
+  >(
+    inner: H,
+    handlerOptions: {
+      /** The `maxRequestBodySize` the handler was created with; 4 MiB as createMcpHandler's default. */
+      readonly maxRequestBodySize?: number;
+    } = {},
+  ): H {
+    const limit = handlerOptions.maxRequestBodySize ?? MAX_REQUEST_BODY_BYTES;
     const fetch = async (
       request: Request,
       requestOptions?: McpHandlerRequestOptions,
@@ -528,7 +601,7 @@ export function mcp(options: McpCaptureOptions) {
         return inner.fetch(request, requestOptions);
       let body = requestOptions?.parsedBody;
       if (body === undefined) {
-        const text = await bodyText(request);
+        const text = await bodyText(request, limit);
         body = text === undefined ? undefined : parseJson(text);
       }
       const header = request.headers.get('mcp-protocol-version');
@@ -566,8 +639,7 @@ export function mcp(options: McpCaptureOptions) {
         }
         throw error;
       }
-      observe(request, response, calls);
-      return response;
+      return observe(request, response, calls);
     };
     return { ...inner, fetch };
   }
@@ -662,25 +734,46 @@ export function mcp(options: McpCaptureOptions) {
   };
 }
 
-/** Feeds each JSON message of an SSE copy to `answered`, until `done` or the request is gone. */
+/**
+ * The client's copy of a stream, as it came; cancelling it lets go of the
+ * other copy too (`abandon`).
+ */
+function following(
+  source: ReadableStream<Uint8Array>,
+  abandon: () => void,
+): ReadableStream<Uint8Array> {
+  const reader = source.getReader();
+  return new ReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        const chunk = await reader.read();
+        if (chunk.done) controller.close();
+        else controller.enqueue(chunk.value);
+      },
+      cancel(reason) {
+        abandon();
+        return reader.cancel(reason);
+      },
+    },
+    { highWaterMark: 0 },
+  );
+}
+/**
+ * Feeds each JSON message of an SSE copy to `answered`, until `done`, the
+ * request is gone or the copy is let go of.
+ */
 async function events(
-  copy: Response,
+  reader: ReadableStreamDefaultReader<string>,
   signal: AbortSignal,
   answered: (value: unknown) => void,
+  abandon: () => void,
   done: () => boolean,
 ): Promise<void> {
-  if (copy.body === null) return;
-  const reader = copy.body.pipeThrough(new TextDecoderStream()).getReader();
   const parser = createParser({
     onEvent: (event) => {
       answered(parseJson(event.data));
     },
   });
-  // A tee'd stream is cancelled at its source only once both copies are:
-  // this copy lets go when the client does, or once every call is answered.
-  const abandon = () => {
-    reader.cancel().catch(ended);
-  };
   signal.addEventListener('abort', abandon, { once: true });
   try {
     while (!done()) {

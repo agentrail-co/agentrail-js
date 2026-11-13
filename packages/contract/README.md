@@ -28,7 +28,7 @@ never edited here.
 Copied from argus branch `feat/mcp-analytics`, base commit
 `23eaa10c2e85a5b86648468bc5e28e304394c19e`, where it was not yet committed
 at copy time (sha256
-`b0466ae7915307279d0c8655a2c6931c1320fecadae169d2135a4655d763038e`).
+`9aa9d1240cb9dad2dc21fbcc1bcadc67a99932ebd04fa2698382a2e3177ea013`).
 
 To take a newer one: copy argus's `apps/api/sdk-contract.json` over this
 file, change the commit above, and run `pnpm test`. A test that fails then

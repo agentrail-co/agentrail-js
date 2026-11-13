@@ -557,6 +557,52 @@ describe('MCP spans as the contract describes them', () => {
     }
   });
 
+  // Fails if someone names a resource with the userinfo, query or fragment
+  // of its URI, which can carry credentials and tokens.
+  it('names a resource read by its URI without userinfo, query or fragment', async () => {
+    const h = await harness();
+    try {
+      const [span] = await rawCall(h, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'resources/read',
+        params: { uri: 'synthetic://user:secret@host/doc?token=x#part' },
+      });
+      expect(span?.name).toBe('mcp.resources/read:synthetic://host/doc');
+    } finally {
+      await h.close();
+    }
+  });
+
+  // Fails if someone hands the redact hook the live answer: a hook that
+  // redacts in place would change what the client gets.
+  it('gives the redact hook copies, so redacting in place never changes the answer', async () => {
+    const h = await harness({
+      redact: ({ request, response }) => {
+        (request as { name: string }).name = 'changed';
+        for (const block of (response as { content: { text: string }[] })
+          .content)
+          block.text = 'changed';
+        return null;
+      },
+    });
+    try {
+      const [client, served] = InMemoryTransport.createLinkedPair();
+      await server(h.capture).connect(h.capture.transport(served));
+      const agent = legacy();
+      await agent.connect(client);
+      const result = await agent.callTool({
+        name: 'synthetic_tool',
+        arguments: {},
+      });
+      await agent.close();
+      expect(JSON.stringify(result)).toContain('SYNTHETIC_PRIVATE_RESULT');
+      expect(JSON.stringify(result)).not.toContain('changed');
+    } finally {
+      await h.close();
+    }
+  });
+
   // Fails if someone sends a JSON-RPC error code outside 32 bits: the
   // collector refuses the whole export carrying it.
   it.each([
@@ -662,6 +708,154 @@ describe('MCP spans as the contract describes them', () => {
       await h.close();
     }
   });
+});
+
+const encoder = new TextEncoder();
+const MiB = 1024 * 1024;
+
+describe('MCP handler capture, as a good guest of the handler', () => {
+  // Fails if someone reads the client's SSE stream on after the client let
+  // go of it: the stream's source (a subscription, its timer, its slot)
+  // would never be cancelled.
+  it('lets go of an SSE stream when the client does', async () => {
+    const h = await harness();
+    try {
+      let cancelled = false;
+      const inner: Pick<McpHttpHandler, 'fetch'> = {
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(
+                    encoder.encode(
+                      'event: message\ndata: {"jsonrpc":"2.0","method":"notifications/progress","params":{}}\n\n',
+                    ),
+                  );
+                },
+                cancel() {
+                  cancelled = true;
+                },
+              }),
+              { headers: { 'content-type': 'text/event-stream' } },
+            ),
+          ),
+      };
+      const response = await h.capture.handler(inner).fetch(
+        new Request(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+        }),
+      );
+      const reader = response.body?.getReader();
+      await reader?.read();
+      await reader?.cancel();
+      await vi.waitFor(() => {
+        expect(cancelled).toBe(true);
+      });
+      await vi.waitFor(async () => {
+        await h.sdk.client.flush();
+        expect(h.transportSpans()).toHaveLength(1);
+      });
+    } finally {
+      await h.close();
+    }
+  });
+
+  // Fails if someone reads a subscriptions/listen stream: the call would
+  // stay open, and its stream held, for as long as the client listens.
+  it('never reads a subscriptions/listen stream, and ends its call at once', async () => {
+    const h = await harness();
+    try {
+      let pulls = 0;
+      const inner: Pick<McpHttpHandler, 'fetch'> = {
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              new ReadableStream<Uint8Array>(
+                {
+                  pull() {
+                    pulls += 1;
+                    return new Promise(() => undefined);
+                  },
+                },
+                { highWaterMark: 0 },
+              ),
+              { headers: { 'content-type': 'text/event-stream' } },
+            ),
+          ),
+      };
+      await h.capture.handler(inner).fetch(
+        new Request(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'subscriptions/listen',
+          }),
+        }),
+      );
+      await h.sdk.client.flush();
+      expect(h.transportSpans().map((span) => span.name)).toEqual([
+        'mcp.subscriptions/listen',
+      ]);
+      expect(pulls).toBe(0);
+    } finally {
+      await h.close();
+    }
+  });
+
+  // Fails if someone reads more of a body than the handler would: one it
+  // refuses unread (not JSON, declared too large), or past its 4 MiB bound.
+  it.each([
+    // A stream reads a chunk or so ahead of its reader.
+    ['a JSON body past the bound', 'application/json', null, 8 * MiB],
+    ['a body that is not JSON', 'text/plain', null, 1 * MiB],
+    ['a body declared too large', 'application/json', '9000000', 1 * MiB],
+  ])(
+    'reads no more of %s than the handler would',
+    async (_, type, length, most) => {
+      const h = await harness();
+      try {
+        let pulled = 0;
+        let pulledBeforeHandler = -1;
+        const chunk = new Uint8Array(MiB).fill(0x20);
+        const body = new ReadableStream<Uint8Array>({
+          pull(controller) {
+            if (pulled >= 20 * MiB) {
+              controller.close();
+              return;
+            }
+            pulled += chunk.byteLength;
+            controller.enqueue(chunk);
+          },
+        });
+        const inner: Pick<McpHttpHandler, 'fetch'> = {
+          fetch: () => {
+            pulledBeforeHandler = pulled;
+            return Promise.resolve(new Response(null, { status: 413 }));
+          },
+        };
+        await h.capture.handler(inner).fetch(
+          new Request(url, {
+            method: 'POST',
+            headers: {
+              'content-type': type,
+              ...(length === null ? {} : { 'content-length': length }),
+            },
+            body,
+            duplex: 'half',
+          } as RequestInit),
+        );
+        expect(pulledBeforeHandler).toBeGreaterThanOrEqual(0);
+        expect(pulledBeforeHandler).toBeLessThanOrEqual(most);
+      } finally {
+        await h.close();
+      }
+    },
+  );
 });
 
 describe('MCP method names', () => {

@@ -10,9 +10,15 @@ when an agent or a person reaches it: the requests it answers and the HTTP and
 you name, your logs and your MCP tool calls. [Agentrail](https://www.agentrail.co)
 links these steps with the ones your edge and pages record, into one journey.
 
-Request bodies, headers and raw identities never leave your process. MCP tool
-arguments and results are not exported unless you turn on `capturePayloads`,
-and then only as your `redact` hook returns them. The same features are in the
+What leaves your process is each step's facts: a request's method, route,
+status, user agent and URL (its query dropped, but for Agentrail's own
+markers); an MCP call's method, tool or prompt name, resource URI (without its
+userinfo, query or fragment), the client's self-reported name and version,
+message sizes and JSON-RPC error code; and identities only as keyed hashes.
+Request and response bodies, other headers and raw identities never leave it.
+MCP tool arguments and results are not exported unless you turn on
+`capturePayloads`, and then only as your `redact` hook returns them. The same
+features are in the
 [Go](https://github.com/agentrail-co/agentrail-go) and
 [Python](https://github.com/agentrail-co/agentrail-python) SDKs.
 
@@ -124,11 +130,12 @@ const capture = mcp({
 });
 ```
 
-A payload is sent as JSON text with no length limit of its own; one is cut
-only when the call would not fit a single 16 MiB export, and then flagged as
-truncated. At most 64 MiB of payload text waits to be sent: past that, calls
-go without their payloads and `onError` is told (`payload_budget`), as it is
-when `redact` throws (`payload_redact_failed`).
+A payload is sent as JSON text with no length limit of its own, except that a
+call's two payloads together are cut to 14 MiB of UTF-8 (the longer first, on a
+character boundary, and flagged as truncated), so one call always fits an
+export. At most 64 MiB of payload text waits to be sent: past that, calls go
+without their payloads and `onError` is told (`payload_budget`), as it is when
+`redact` throws or returns what JSON cannot hold (`payload_redact_failed`).
 
 ## Documentation
 

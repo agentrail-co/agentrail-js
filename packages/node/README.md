@@ -104,14 +104,14 @@ export const handler = capture.handler(
   }),
 );
 
+// A transport you own: connect the wrapped one.
+await server.connect(capture.transport(transport));
+```
+
 If you create the handler with a larger `maxRequestBodySize` than
 `createMcpHandler`'s 4 MiB default, give the wrapper the same value, or bodies
 past 4 MiB are served without a step:
 `capture.handler(createMcpHandler(factory, { maxRequestBodySize }), { maxRequestBodySize })`.
-
-// A transport you own: connect the wrapped one.
-await server.connect(capture.transport(transport));
-```
 
 Each call carries its method and name, the client's self-reported name,
 version and protocol, the keyed hash of its `Mcp-Session-Id` (none for a

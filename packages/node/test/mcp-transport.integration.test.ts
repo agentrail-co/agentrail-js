@@ -557,6 +557,54 @@ describe('MCP spans as the contract describes them', () => {
     }
   });
 
+  // Fails if someone sends a JSON-RPC error code outside 32 bits: the
+  // collector refuses the whole export carrying it.
+  it.each([
+    [2147483648, undefined],
+    [-2147483649, undefined],
+    [-2147483648, -2147483648],
+  ])(
+    'sends error code %d only where it is a 32-bit integer',
+    async (code, sent) => {
+      const h = await harness();
+      try {
+        const inner: Pick<McpHttpHandler, 'fetch'> = {
+          fetch: () =>
+            Promise.resolve(
+              Response.json({
+                jsonrpc: '2.0',
+                id: 1,
+                error: { code, message: 'Synthetic error' },
+              }),
+            ),
+        };
+        await h.capture.handler(inner).fetch(
+          new Request(url, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              jsonrpc: '2.0',
+              id: 1,
+              method: 'tools/list',
+            }),
+          }),
+        );
+        await vi.waitFor(async () => {
+          await h.sdk.client.flush();
+          expect(h.transportSpans()).toHaveLength(1);
+        });
+        const [span] = h.transportSpans();
+        expect(span?.status?.code).toBe(2);
+        expect(attributesOf(span?.attributes)['error.type']).toBe(
+          'McpJsonRpcError',
+        );
+        expect(attributesOf(span?.attributes)[A.errorCode]).toBe(sent);
+      } finally {
+        await h.close();
+      }
+    },
+  );
+
   // Fails if someone leaves a request the transport refused without a
   // JSON-RPC answer looking like a call that succeeded.
   it.each([

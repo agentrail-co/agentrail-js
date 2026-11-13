@@ -330,8 +330,15 @@ export function mcp(options: McpCaptureOptions) {
       if (bytes !== undefined) facts.responseBytes = bytes;
       const error = record(response.error);
       if (error !== undefined) {
-        if (Number.isSafeInteger(error.code))
-          facts.errorCode = error.code as number;
+        // The collector keeps a 32-bit code and refuses an export with any
+        // other; the span is still an error without it.
+        if (
+          typeof error.code === 'number' &&
+          Number.isInteger(error.code) &&
+          error.code >= -2_147_483_648 &&
+          error.code <= 2_147_483_647
+        )
+          facts.errorCode = error.code;
         failed(span, 'McpJsonRpcError');
       } else if (
         call.method === 'tools/call' &&

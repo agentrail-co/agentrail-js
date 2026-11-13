@@ -56,12 +56,11 @@ export function markersOf(url: URL): string[] {
   return prefix === undefined ? seen : [...seen, prefix];
 }
 
-/** The markers in URLs anywhere in a value, as text; the value is not kept. */
-export function markersIn(value: unknown): string[] {
-  // A tool given no arguments has none to read; what WebMCP hands a tool is
-  // otherwise JSON.
-  if (value === undefined) return [];
-  const text = JSON.stringify(value);
+/**
+ * The markers in URLs anywhere in a text, as a tool's arguments' JSON holds
+ * them; the text is not kept.
+ */
+export function markersInText(text: string): string[] {
   return [...text.matchAll(MARKER_IN_TEXT)].flatMap((match) =>
     match[1] === undefined ? [] : [match[1]],
   );

@@ -370,12 +370,11 @@ export function start(options: BrowserOptions): Agentrail {
           .catch(told);
 
   // A page being hidden may never come back: what is queued goes as a beacon.
-  // A payload still on its way goes first: one the browser would not take
-  // as a beacon joins the queue as its event alone.
+  // A hidden page's fetches go on, its payloads' too; a closing page's
+  // payload still on its way goes first, and what it cannot carry joins the
+  // queue as events alone.
   const onHidden = () => {
-    if (document.visibilityState !== 'hidden') return;
-    payloads?.close();
-    transport.send('beacon');
+    if (document.visibilityState === 'hidden') transport.send('beacon');
   };
   const onPageHide = () => {
     payloads?.close();

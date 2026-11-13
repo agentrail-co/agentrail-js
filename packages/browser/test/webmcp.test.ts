@@ -249,6 +249,88 @@ describe('WebMCP tool runs', () => {
   });
 });
 
+describe('WebMCP runs, as a good guest of the page', () => {
+  afterEach(() => {
+    Reflect.deleteProperty(holder, 'modelContext');
+    Reflect.deleteProperty(document, 'visibilityState');
+  });
+  const never = (url: string) =>
+    url === PAYLOADS
+      ? new Promise<Response>(() => undefined)
+      : new Response('{}', { status: 200 });
+
+  // Fails if someone lets sizing a run throw into the tool's caller: a
+  // page's own throwing toJSON would replace the tool's answer.
+  it('never lets sizing a run fail the tool', async () => {
+    const tools = webmcp();
+    const site = onPage(quiet);
+    const awkward = {
+      toJSON() {
+        throw new Error('Synthetic toJSON failure.');
+      },
+    };
+    tools.give('awkward', () => Promise.resolve(awkward));
+    await expect(tools.run('awkward', awkward)).resolves.toBe(awkward);
+    const [run] = (await site.sent())
+      .flatMap((call) => call.events)
+      .filter((event) => event.kind === 'agent.tool.executed');
+    expect(run?.webmcp).toEqual({
+      tool: 'awkward',
+      outcome: 'answered',
+      argumentBytes: null,
+      resultBytes: null,
+    });
+  });
+
+  // Fails if someone hands the redact hook the live result: a hook that
+  // redacts in place would change what the tool's caller gets.
+  it('gives the redact hook copies, so redacting in place never changes the answer', async () => {
+    const tools = webmcp();
+    onPage({
+      ...quiet,
+      capturePayloads: {
+        redact: (run) => {
+          (run.result as { booked: unknown }).booked = 'changed';
+          return null;
+        },
+      },
+    });
+    tools.give('book', () => Promise.resolve({ booked: true }));
+    await expect(tools.run('book', {})).resolves.toEqual({ booked: true });
+  });
+
+  // Fails if someone resends a hidden tab's payloads (its fetches go on, so
+  // the run would arrive twice), or beacons more than one payload as the
+  // page closes (the beacons share a budget with the queue's last call).
+  it('resends no payload when the tab is only hidden, and one as the page closes', async () => {
+    const tools = webmcp();
+    const site = onPage(
+      { ...quiet, capturePayloads: { redact: (run) => run } },
+      never,
+    );
+    tools.give('read', () => Promise.resolve({ text: 'x'.repeat(20_000) }));
+    await tools.run('read', { page: 1 });
+    await tools.run('read', { page: 2 });
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      value: 'hidden',
+    });
+    document.dispatchEvent(new Event('visibilitychange'));
+    const toPayloads = () =>
+      site.beacons.filter((beacon) => beacon.url === PAYLOADS);
+    expect(toPayloads()).toEqual([]);
+
+    window.dispatchEvent(new PageTransitionEvent('pagehide'));
+    expect(toPayloads()).toHaveLength(1);
+    const runs = (await site.calls())
+      .flatMap((call) => call.events)
+      .filter((event) => event.kind === 'agent.tool.executed');
+    const beaconed = (await site.payloadCalls()).at(-1)?.call.event.id;
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.id).not.toBe(beaconed);
+  });
+});
+
 describe('a payload cut to fit', () => {
   // Fails if someone cuts a payload through a surrogate pair (the collector
   // refuses half a pair) or past the budget, at any of a character's offsets.

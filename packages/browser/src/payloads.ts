@@ -125,9 +125,11 @@ export interface Payloads {
     response: string | null,
   ): void;
   /**
-   * The page is closing: each payload still on its way goes again as a
-   * beacon, cut to a closing page's call budget; one the browser would not
-   * queue goes as its event alone.
+   * The page is closing (not only hidden: a hidden page's fetches go on):
+   * one payload still on its way goes again as a beacon, cut to a closing
+   * page's call budget, since a closing page's beacons share one budget with
+   * the queue's own last call; every other, and one the browser would not
+   * queue, goes as its event alone.
    */
   close(): void;
 }
@@ -195,7 +197,10 @@ export function createPayloads(options: PayloadOptions): Payloads {
         );
     },
     close() {
-      for (const call of pending.values()) {
+      const [first, ...others] = pending.values();
+      pending.clear();
+      for (const call of others) options.alone(call.event);
+      for (const call of first === undefined ? [] : [first]) {
         const body = JSON.stringify(fitted(call, MAX_CALL_BYTES));
         if (options.beacon === null)
           void options
@@ -222,7 +227,6 @@ export function createPayloads(options: PayloadOptions): Payloads {
         )
           options.alone(call.event);
       }
-      pending.clear();
     },
   };
 }

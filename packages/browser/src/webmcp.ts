@@ -5,7 +5,7 @@ import {
   type WebMcpOutcome,
 } from 'agentrail-core';
 
-import { browserEvent, markersIn, type Recorder } from './events.js';
+import { browserEvent, markersInText, type Recorder } from './events.js';
 import { BROWSER_EVENT_KINDS, type Page } from './wire.js';
 
 /**
@@ -66,9 +66,10 @@ export function jsonOf(value: unknown): string | null {
     return null;
   try {
     return JSON.stringify(value);
-  } catch (error) {
-    if (error instanceof TypeError) return null;
-    throw error;
+  } catch {
+    // A cycle or a BigInt, or the page's own getter or toJSON throwing:
+    // whatever it is, the tool's caller never gets it, and the size is null.
+    return null;
   }
 }
 const bytesOf = (text: string | null) =>
@@ -97,8 +98,8 @@ function wrapped(tool: Tool, context: ToolContext): Tool {
       // it consumed out of its arguments.
       const start = context.now();
       const page = context.page();
-      const seen = markersIn(args[0]);
       const given = jsonOf(args[0]);
+      const seen = given === null ? [] : markersInText(given);
       const name = TOOL_NAME.test(tool.name) ? tool.name : null;
       let outcome: WebMcpOutcome = 'threw';
       let result: unknown;
@@ -125,10 +126,12 @@ function wrapped(tool: Tool, context: ToolContext): Tool {
         });
         if (context.ran === undefined) context.record(event);
         else
+          // Copies, so a hook that redacts in place never changes what the
+          // tool's caller gets.
           context.ran(event, {
             tool: name,
             arguments: given === null ? undefined : JSON.parse(given),
-            result,
+            result: answered === null ? undefined : JSON.parse(answered),
           });
       };
       try {

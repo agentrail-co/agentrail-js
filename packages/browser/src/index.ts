@@ -38,7 +38,10 @@ export {
   BrowserCollectorRefusedError,
   BrowserCollectorUnavailableError,
 } from './transport.js';
-export type { BrowserPayloadCall } from './payloads.js';
+export {
+  BrowserPayloadBudgetError,
+  type BrowserPayloadCall,
+} from './payloads.js';
 export {
   BROWSER_EVENT_KINDS,
   KEY_CLASSES,

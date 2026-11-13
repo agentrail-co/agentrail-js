@@ -29,6 +29,15 @@ export interface BrowserPayloadCall {
 
 /** The most the collector takes in one payload call. */
 const MAX_PAYLOAD_CALL_BYTES = 16 * 1024 * 1024;
+/** The most payload text on its way at once, as the Node SDK holds at most. */
+const MAX_PENDING_BYTES = 64 * 1024 * 1024;
+/** How long a payload call may take: the edge's deadline for its calls. */
+const PAYLOAD_DEADLINE_MS = 25_000;
+
+/** A run's payload did not go: past the budget on its way, its event went alone. */
+export class BrowserPayloadBudgetError extends Error {
+  override readonly name = 'BrowserPayloadBudgetError';
+}
 
 export interface PayloadOptions {
   /** The collector's `POST /ingest/browser/payloads`. */
@@ -134,9 +143,17 @@ export interface Payloads {
   close(): void;
 }
 
+interface Pending {
+  readonly call: BrowserPayloadCall;
+  readonly bytes: number;
+  readonly timer: ReturnType<typeof setTimeout>;
+}
+
 export function createPayloads(options: PayloadOptions): Payloads {
   /** Sent by fetch and not yet answered, by event id. */
-  const pending = new Map<string, BrowserPayloadCall>();
+  const pending = new Map<string, Pending>();
+  /** The payload text of what is pending. */
+  let held = 0;
   const base = {
     key: options.key,
     component: options.component,
@@ -144,14 +161,27 @@ export function createPayloads(options: PayloadOptions): Payloads {
   };
   const headers = { 'content-type': 'text/plain;charset=UTF-8' };
 
+  /** Takes a call off the pending; undefined where it already was. */
+  function settle(id: string): Pending | undefined {
+    const entry = pending.get(id);
+    if (entry === undefined) return undefined;
+    pending.delete(id);
+    clearTimeout(entry.timer);
+    held -= entry.bytes;
+    return entry;
+  }
+  /** Takes every call off the pending, in the order they went. */
+  function settleAll(): Pending[] {
+    return [...pending.keys()].flatMap((id) => settle(id) ?? []);
+  }
+
   /** A payload that never arrived: its event still goes, alone. */
   function lost(id: string, error: Error): void {
-    const call = pending.get(id);
-    // Already sent again as the page closed.
-    if (call === undefined) return;
-    pending.delete(id);
+    // Already sent again as the page closed, or as the script stopped.
+    const entry = settle(id);
+    if (entry === undefined) return;
     options.onError(error);
-    options.alone(call.event);
+    options.alone(entry.call.event);
   }
 
   return {
@@ -169,22 +199,47 @@ export function createPayloads(options: PayloadOptions): Payloads {
         },
         MAX_PAYLOAD_CALL_BYTES,
       );
-      pending.set(event.id, call);
+      const body = JSON.stringify(call);
+      const bytes = encoder.encode(body).byteLength;
+      if (held + bytes > MAX_PENDING_BYTES) {
+        options.onError(
+          new BrowserPayloadBudgetError(
+            'More than 64 MiB of payloads were on their way; the tool run was sent without its content.',
+          ),
+        );
+        options.alone(event);
+        return;
+      }
+      const controller = new AbortController();
+      const timer = setTimeout(() => {
+        lost(
+          event.id,
+          new BrowserCollectorUnavailableError(
+            'The payload call took longer than 25 s; the tool run was sent without its content.',
+          ),
+        );
+        controller.abort();
+      }, PAYLOAD_DEADLINE_MS);
+      pending.set(event.id, { call, bytes, timer });
+      held += bytes;
       options
         .fetch(options.endpoint, {
           method: 'POST',
           // Text, so a cross-origin call needs no preflight.
           headers,
-          body: JSON.stringify(call),
+          body,
           credentials: 'omit',
+          signal: controller.signal,
         })
         .then(
           (answer) => {
-            if (answer.ok) pending.delete(event.id);
+            if (answer.ok) settle(event.id);
             else
               lost(event.id, new BrowserCollectorRefusedError(answer.status));
           },
           (error: unknown) => {
+            // Its deadline aborted it, and its run already went alone.
+            if (controller.signal.aborted) return;
             // Fetch rejects only when the call never got an answer.
             if (!(error instanceof TypeError)) throw error;
             lost(
@@ -197,8 +252,7 @@ export function createPayloads(options: PayloadOptions): Payloads {
         );
     },
     close() {
-      const [first, ...others] = pending.values();
-      pending.clear();
+      const [first, ...others] = settleAll().map((entry) => entry.call);
       for (const call of others) options.alone(call.event);
       for (const call of first === undefined ? [] : [first]) {
         const body = JSON.stringify(fitted(call, MAX_CALL_BYTES));

@@ -1,7 +1,9 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   BrowserCollectorRefusedError,
+  BrowserCollectorUnavailableError,
+  BrowserPayloadBudgetError,
   BrowserPayloadRedactError,
   type BrowserOptions,
   type BrowserPayloadCall,
@@ -365,6 +367,69 @@ describe('WebMCP runs, as a good guest of the page', () => {
     expect(runs).toHaveLength(1);
     expect(runs[0]?.id).not.toBe(beaconed);
   });
+});
+
+describe('payloads on their way', () => {
+  afterEach(() => {
+    Reflect.deleteProperty(holder, 'modelContext');
+    vi.useRealTimers();
+  });
+  const never = (url: string) =>
+    url === PAYLOADS
+      ? new Promise<Response>(() => undefined)
+      : new Response('{}', { status: 200 });
+  const runsOf = async (site: ReturnType<typeof onPage>) =>
+    (await site.sent())
+      .flatMap((call) => call.events)
+      .filter((event) => event.kind === 'agent.tool.executed');
+
+  // Fails if someone gives a payload call no deadline: a collector that
+  // never answers would hold the run, and its content, for good.
+  it('sends a run alone once its payload call has taken 25 s', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const tools = webmcp();
+    const errors: Error[] = [];
+    const site = onPage(
+      {
+        ...quiet,
+        capturePayloads: { redact: (run) => run },
+        onError: (error) => errors.push(error),
+      },
+      never,
+    );
+    tools.give('book', () => Promise.resolve({ booked: true }));
+    await tools.run('book', {});
+    vi.advanceTimersByTime(24_999);
+    expect(await runsOf(site)).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect((await runsOf(site)).map((event) => event.webmcp?.tool)).toEqual([
+      'book',
+    ]);
+    expect(errors).toEqual([expect.any(BrowserCollectorUnavailableError)]);
+  });
+
+  // Fails if someone lets payloads on their way pile up without bound: a
+  // collector slow to answer would hold every run's content in the page.
+  it('holds at most 64 MiB of payloads on their way, and sends a run past it alone', async () => {
+    const tools = webmcp();
+    const errors: Error[] = [];
+    const site = onPage(
+      {
+        ...quiet,
+        capturePayloads: { redact: (run) => run },
+        onError: (error) => errors.push(error),
+      },
+      never,
+    );
+    const large = 'x'.repeat(13 * 1024 * 1024);
+    tools.give('read', () => Promise.resolve(large));
+    for (let index = 0; index < 5; index += 1) await tools.run('read', {});
+    expect(site.fetched.filter((call) => call.url === PAYLOADS)).toHaveLength(
+      4,
+    );
+    expect(await runsOf(site)).toHaveLength(1);
+    expect(errors).toEqual([expect.any(BrowserPayloadBudgetError)]);
+  }, 60_000);
 });
 
 describe('a payload cut to fit', () => {

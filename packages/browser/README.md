@@ -56,7 +56,9 @@ start({
 });
 ```
 
-A run whose payload call fails is still sent, without its payload. A closing
+A run whose payload call fails, takes longer than 25 s, or would put more than
+64 MiB of payloads on their way at once is still sent, without its payload,
+and `onError` is told. A closing
 page sends a payload still on its way as a beacon, cut to fit 30,000 bytes and
 flagged as truncated.
 

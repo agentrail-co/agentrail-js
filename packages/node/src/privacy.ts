@@ -163,12 +163,14 @@ export function copySpan(
     droppedLinksCount: 0,
   };
 }
+/** A method the collector keeps; any other is named only in the span name. */
+const MCP_METHOD = /^[A-Za-z0-9_./-]{1,128}$/u;
 function mcpAttributes(facts: McpFacts): Attributes {
-  const attrs: Attributes = {
-    'agentrail.mcp.layer': facts.layer,
-    'agentrail.mcp.method': boundedText(facts.method, 256),
-  };
+  const attrs: Attributes = { 'agentrail.mcp.layer': facts.layer };
   const optional = {
+    'agentrail.mcp.method': MCP_METHOD.test(facts.method)
+      ? facts.method
+      : undefined,
     'agentrail.mcp.session.id_hash': facts.sessionHash,
     'agentrail.mcp.request.bytes': facts.requestBytes,
     'agentrail.mcp.response.bytes': facts.responseBytes,

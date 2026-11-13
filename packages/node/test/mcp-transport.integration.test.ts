@@ -333,6 +333,7 @@ describe('MCP transport capture', () => {
         throw new Error('Synthetic redact failure.');
       },
     ],
+    ['unserialisable', () => ({ request: 1n, response: null })],
   ] as const)(
     'sends payloads only as redact returns them (%s)',
     async (variant, redact) => {
@@ -391,7 +392,7 @@ describe('MCP transport capture', () => {
         }
         expect(calls.length > 0).toBe(variant !== 'off');
         expect(h.failures.map((error) => error.code)).toEqual(
-          variant === 'throwing'
+          variant === 'throwing' || variant === 'unserialisable'
             ? calls.map(() => 'payload_redact_failed')
             : [],
         );
@@ -463,7 +464,92 @@ describe('MCP transport capture', () => {
   });
 });
 
+describe('MCP method names', () => {
+  // Fails if someone sends agentrail.mcp.method for a method the collector
+  // would refuse, or drops the message's span with it.
+  it('names any method in the span, and sends the method attribute only where the contract allows it', async () => {
+    const h = await harness();
+    try {
+      const [client, served] = InMemoryTransport.createLinkedPair();
+      await server(h.capture).connect(h.capture.transport(served));
+      const answered = new Promise<unknown>((resolve) => {
+        client.onmessage = resolve;
+      });
+      await client.start();
+      await client.send({ jsonrpc: '2.0', id: 1, method: 'not a method!' });
+      await answered;
+      await client.close();
+      await h.sdk.client.flush();
+      const [span, ...more] = h.transportSpans();
+
+      expect(more).toEqual([]);
+      expect(span?.name).toBe('mcp.not a method!');
+      expect(attributesOf(span?.attributes)[A.method]).toBeUndefined();
+      expect(attributesOf(span?.attributes)[A.errorCode]).toBe(-32601);
+    } finally {
+      await h.close();
+    }
+  });
+});
+
 describe('MCP handler capture (createMcpHandler)', () => {
+  // Fails if someone records a JSON-RPC batch as one call, or loses a
+  // message's response when the batch is answered over SSE.
+  it('records one transport span per message of a JSON-RPC batch', async () => {
+    const h = await harness();
+    try {
+      const handler = h.capture.handler(
+        createMcpHandler(() => server(h.capture)),
+      );
+      const response = await handler.fetch(
+        new Request(url, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            accept: 'application/json, text/event-stream',
+            'mcp-protocol-version': '2025-03-26',
+          },
+          body: JSON.stringify([
+            {
+              jsonrpc: '2.0',
+              id: 1,
+              method: 'tools/call',
+              params: { name: 'synthetic_tool', arguments: {} },
+            },
+            { jsonrpc: '2.0', id: 2, method: 'tools/list' },
+          ]),
+        }),
+      );
+      expect(await response.text()).toContain('SYNTHETIC_PRIVATE_RESULT');
+      await vi.waitFor(async () => {
+        await h.sdk.client.flush();
+        expect(h.transportSpans()).toHaveLength(2);
+      });
+      const transports = h.transportSpans();
+      expect(transports.map((span) => span.name).sort()).toEqual([
+        'mcp.tools/call:synthetic_tool',
+        'mcp.tools/list',
+      ]);
+      expect(
+        transports.every(
+          (span) =>
+            typeof attributesOf(span.attributes)[A.responseBytes] === 'number',
+        ),
+      ).toBe(true);
+      const call = transports.find(
+        (span) => span.name === 'mcp.tools/call:synthetic_tool',
+      );
+      const child = h
+        .mcpSpans()
+        .find((span) => attributesOf(span.attributes)[A.layer] === 'handler');
+      expect(child?.parentSpanId?.equals(call?.spanId ?? Buffer.alloc(0))).toBe(
+        true,
+      );
+    } finally {
+      await h.close();
+    }
+  });
+
   // Fails if someone wraps the handler but leaves its calls uncounted,
   // counts a call twice, changes what the client gets, or sizes a message
   // other than as the SDK encodes it.

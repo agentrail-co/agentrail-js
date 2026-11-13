@@ -1,14 +1,16 @@
-import { checkBrowserCall } from 'agentrail-contract';
+import { checkBrowserCall, checkBrowserPayloadCall } from 'agentrail-contract';
 import { afterEach } from 'vitest';
 
 import {
   start,
   type BrowserCall,
   type BrowserOptions,
+  type BrowserPayloadCall,
 } from '../../src/index.js';
 
 export const KEY = 'ajp_public-key-of-the-browser-source';
 export const COLLECTOR = 'https://collector.example.test/ingest/browser';
+export const PAYLOADS = `${COLLECTOR}/payloads`;
 export const API = 'https://api.example.test';
 
 const cleanups: (() => void)[] = [];
@@ -33,14 +35,15 @@ interface Sent {
  */
 export function onPage(
   options: Partial<BrowserOptions> = {},
-  answer: (url: string) => Response = () => new Response('{}', { status: 200 }),
+  answer: (url: string) => Response | Promise<Response> = () =>
+    new Response('{}', { status: 200 }),
   {
     beacon = true,
     refuses = 0,
   }: { readonly beacon?: boolean; readonly refuses?: number } = {},
 ) {
   const fetched: Sent[] = [];
-  const beacons: Blob[] = [];
+  const beacons: { url: string; data: Blob }[] = [];
   let refused = 0;
   // The test's own fetch, put back as it was after each test.
   // eslint-disable-next-line @typescript-eslint/unbound-method
@@ -66,12 +69,12 @@ export function onPage(
   if (beacon)
     Object.defineProperty(window.navigator, 'sendBeacon', {
       configurable: true,
-      value: (_url: string, data: Blob) => {
+      value: (url: string, data: Blob) => {
         if (refused < refuses) {
           refused += 1;
           return false;
         }
-        beacons.push(data);
+        beacons.push({ url, data });
         return true;
       },
     });
@@ -91,18 +94,40 @@ export function onPage(
   });
 
   /** Every call the collector got, by fetch or beacon, each checked against what it takes. */
-  async function calls(): Promise<BrowserCall[]> {
-    const bodies = [
+  async function bodiesTo(url: string): Promise<string[]> {
+    return [
       ...fetched
-        .filter((call) => call.url === COLLECTOR)
+        .filter((call) => call.url === url)
         .map((call) => call.body ?? ''),
-      ...(await Promise.all(beacons.map((beacon) => beacon.text()))),
+      ...(await Promise.all(
+        beacons
+          .filter((beacon) => beacon.url === url)
+          .map((beacon) => beacon.data.text()),
+      )),
     ];
+  }
+
+  async function calls(): Promise<BrowserCall[]> {
+    const bodies = await bodiesTo(COLLECTOR);
     // A call the collector would refuse fails the test that made it.
     return bodies.map((body) => {
       const call: unknown = JSON.parse(body);
       checkBrowserCall(call);
       return call as BrowserCall;
+    });
+  }
+
+  /** Every payload call the collector got, by fetch or beacon, each checked against what it takes. */
+  async function payloadCalls(): Promise<
+    { readonly bytes: number; readonly call: BrowserPayloadCall }[]
+  > {
+    return (await bodiesTo(PAYLOADS)).map((body) => {
+      const call: unknown = JSON.parse(body);
+      checkBrowserPayloadCall(call);
+      return {
+        bytes: new TextEncoder().encode(body).byteLength,
+        call: call as BrowserPayloadCall,
+      };
     });
   }
 
@@ -112,5 +137,5 @@ export function onPage(
     return calls();
   }
 
-  return { agentrail, fetched, beacons, calls, sent };
+  return { agentrail, fetched, beacons, calls, payloadCalls, sent };
 }

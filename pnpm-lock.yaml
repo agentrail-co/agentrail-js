@@ -128,6 +128,9 @@ importers:
       agentrail-core:
         specifier: workspace:*
         version: link:../core
+      eventsource-parser:
+        specifier: 3.1.1
+        version: 3.1.1
     devDependencies:
       '@modelcontextprotocol/client':
         specifier: 2.3.1

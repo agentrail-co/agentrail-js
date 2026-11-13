@@ -23,7 +23,7 @@ export class BrowserCollectorUnavailableError extends Error {
  * where there is no beacon) share one budget of 64 KiB in flight; this
  * leaves room for two calls under way.
  */
-const MAX_CALL_BYTES = 30_000;
+export const MAX_CALL_BYTES = 30_000;
 /**
  * The most of each one call holds: the collector refuses a call with more
  * (`journeyBrowserCallSchema`, apps/api/src/modules/journey-ingest/schema.ts).

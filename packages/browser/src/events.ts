@@ -1,4 +1,9 @@
-import { newId, type AgentrailEvent, type SpanContext } from 'agentrail-core';
+import {
+  newId,
+  type AgentrailEvent,
+  type SpanContext,
+  type WebMcpRun,
+} from 'agentrail-core';
 
 import { BROWSER_EVENT_KINDS } from './wire.js';
 
@@ -74,6 +79,8 @@ interface Step {
   readonly method: string;
   readonly status: number | null;
   readonly seen: readonly string[];
+  /** A WebMCP tool run's facts. */
+  readonly webmcp?: WebMcpRun;
 }
 
 export function browserEvent(recorder: Recorder, step: Step): AgentrailEvent {
@@ -122,6 +129,7 @@ export function browserEvent(recorder: Recorder, step: Step): AgentrailEvent {
     principal: null,
     registration: null,
     markers: { served: [], seen: [...step.seen] },
+    ...(step.webmcp === undefined ? {} : { webmcp: step.webmcp }),
     redactions:
       recorded?.dropped === true
         ? [{ field: 'http.path', reason: 'query_outside_allowlist' }]

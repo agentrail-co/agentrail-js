@@ -180,8 +180,26 @@ export interface AgentrailEvent {
     /** Marker strings found in this step's request, as received. */
     readonly seen: string[];
   };
+  /**
+   * A WebMCP tool run's facts (kind `agent.tool.executed`): never its
+   * arguments or result, only their JSON size.
+   */
+  readonly webmcp?: WebMcpRun | null | undefined;
   /** What was hashed or dropped here, and why. */
   readonly redactions: { readonly field: string; readonly reason: string }[];
+}
+
+/** How a WebMCP tool run ended: `is_error` for a result that said it failed. */
+export type WebMcpOutcome = 'answered' | 'threw' | 'is_error';
+
+export interface WebMcpRun {
+  /** The tool's name; null where it does not match `^[A-Za-z0-9_./-]{1,128}$`. */
+  readonly tool: string | null;
+  readonly outcome: WebMcpOutcome;
+  /** The UTF-8 size of the arguments' JSON; null where they have none. */
+  readonly argumentBytes: number | null;
+  /** The UTF-8 size of the result's JSON; null where it threw or has none. */
+  readonly resultBytes: number | null;
 }
 
 /** The capture code that sent a call, and the surfaces it is set up to capture. */

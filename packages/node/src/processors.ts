@@ -6,7 +6,13 @@ import type { LogRecordProcessor } from '@opentelemetry/sdk-logs';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
 import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-proto';
 import { ExportQueue } from './queue.js';
-import { copyLog, copySpan } from './privacy.js';
+import {
+  copyLog,
+  copySpan,
+  estimatedBytes,
+  payloadBytes,
+  withoutPayloads,
+} from './privacy.js';
 import type { Runtime } from './runtime.js';
 
 export function processors(runtime: Runtime) {
@@ -19,6 +25,7 @@ export function processors(runtime: Runtime) {
     'traces',
     new OTLPTraceExporter({ ...config, url: `${options.endpoint}/v1/traces` }),
     options,
+    { bytes: estimatedBytes, payloadBytes, withoutPayloads },
   );
   const logs = new ExportQueue(
     'logs',

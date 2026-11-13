@@ -25,6 +25,9 @@ loaded apart, raw behaviour and the tab's fingerprint. How to install it:
   this package measures is its own, and the script stays one small file.
 - Behaviour and the fingerprint are off unless the site turns them on, the
   fingerprint only with the visitor's consent; the proofs need no consent.
+- A WebMCP run's event carries its facts (tool name, outcome, sizes), never
+  its content. Content goes only with `capturePayloads`, after the site's
+  `redact` hook, to `POST /ingest/browser/payloads` (`src/payloads.ts`).
 - What runs on a page works on plain HTTP and in browsers from before 2023:
   ids come from `newId` (core), never `crypto.randomUUID`, which a page has
   only over HTTPS.

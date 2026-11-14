@@ -557,6 +557,71 @@ describe('MCP spans as the contract describes them', () => {
     }
   });
 
+  // Fails if someone stops telling the transport span that its handler
+  // threw: the server answers the throw with an isError result of its own,
+  // so the step would say tool_error, a failed result, for a failed call.
+  // Or if someone marks a result that says isError, with no throw, as more
+  // than tool_error.
+  it('marks a tool whose handler threw with the thrown type on its transport span, and an isError result as tool_error', async () => {
+    class SyntheticToolError extends Error {
+      override name = 'SyntheticToolError';
+    }
+    const h = await harness();
+    try {
+      const served = server(h.capture);
+      served.registerTool(
+        'throwing_tool',
+        {},
+        h.capture.tool('throwing_tool', () => {
+          throw new SyntheticToolError('synthetic throw');
+        }),
+      );
+      const [client, inner] = InMemoryTransport.createLinkedPair();
+      await served.connect(h.capture.transport(inner));
+      const agent = legacy();
+      await agent.connect(client);
+      const thrown = await agent.callTool({
+        name: 'throwing_tool',
+        arguments: {},
+      });
+      // The server answered the throw itself, as a result that says isError.
+      expect(thrown.isError).toBe(true);
+      await agent.callTool({ name: 'failing_tool', arguments: {} });
+      await agent.close();
+      await h.sdk.client.flush();
+      const span = (name: string, layer: string) =>
+        h
+          .mcpSpans()
+          .find(
+            (item) =>
+              item.name === name &&
+              attributesOf(item.attributes)[A.layer] === layer,
+          );
+
+      const call = span('mcp.tools/call:throwing_tool', 'transport');
+      expect(call?.status?.code).toBe(2);
+      expect(attributesOf(call?.attributes)).toMatchObject({
+        [OTLP.spanAttributes.explicitStep]: true,
+        [A.isError]: true,
+        'error.type': 'SyntheticToolError',
+      });
+      const work = span('mcp.tools/call:throwing_tool', 'handler');
+      expect(work?.status?.code).toBe(2);
+      expect(attributesOf(work?.attributes)['error.type']).toBe(
+        'SyntheticToolError',
+      );
+
+      const said = span('mcp.tools/call:failing_tool', 'transport');
+      expect(said?.status?.code).toBe(2);
+      expect(attributesOf(said?.attributes)).toMatchObject({
+        [A.isError]: true,
+        'error.type': 'tool_error',
+      });
+    } finally {
+      await h.close();
+    }
+  });
+
   // Fails if someone names a resource with the userinfo, query or fragment
   // of its URI, which can carry credentials and tokens.
   it('names a resource read by its URI without userinfo, query or fragment', async () => {

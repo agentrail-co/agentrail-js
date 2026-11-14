@@ -119,6 +119,10 @@ stateless server), the size of the request and response as JSON, and its
 JSON-RPC error code or `isError` result. `capture.tool`, `capture.resource`
 and `capture.prompt` add the handler's own span inside the call, so a call is
 counted once; on their own, without a wrapped transport, each is the step.
+Inside a wrapped transport, a tool whose callback threw is a failed call: the
+MCP server answers the throw with an `isError` result of its own, and the call
+keeps `isError` but carries the thrown error's type, where a result your tool
+returned with `isError` is a failed result (`tool_error`).
 
 Payloads are off by default. To send them, redact first; returning `null`
 sends neither:

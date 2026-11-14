@@ -56,6 +56,11 @@ interface Call {
   readonly span: Span;
   readonly ctx: Context;
   readonly facts: McpFacts;
+  /**
+   * Set when a wrapped handler under this call threw: the thrown error's
+   * type, undefined for a thrown value that is no Error.
+   */
+  threw?: { readonly type: string | undefined };
 }
 /** The transport spans a request's handlers run under, by JSON-RPC id. */
 const callsKey = createContextKey('agentrail.mcp.calls');
@@ -146,9 +151,13 @@ function kindOf(method: string): string {
     ? 'tool.call'
     : boundedText(`mcp.${method}`, 256);
 }
-function failed(span: Span, type: string): void {
+function failed(span: Span, type: string | undefined): void {
   span.setStatus({ code: SpanStatusCode.ERROR });
-  span.setAttribute('error.type', type);
+  if (type !== undefined) span.setAttribute('error.type', type);
+}
+/** The type a span gives a thrown value: an Error's name, nothing for anything else. */
+function thrownType(error: unknown): string | undefined {
+  return error instanceof Error ? error.name : undefined;
 }
 /** What the client declared in its initialize, for the messages after it. */
 type Declared = Pick<ClientFacts, 'client' | 'clientVersion'>;
@@ -370,13 +379,13 @@ export function mcp(options: McpCaptureOptions) {
     response: Message | undefined,
     sessionId: string | null | undefined,
   ): void {
-    const { span, facts } = call;
+    const { span, facts, threw } = call;
     if (typeof sessionId === 'string' && sessionId !== '')
       facts.sessionHash = runtime.hash(sessionId);
+    const error = record(response?.error);
     if (response !== undefined) {
       const bytes = jsonBytes(response);
       if (bytes !== undefined) facts.responseBytes = bytes;
-      const error = record(response.error);
       if (error !== undefined) {
         // The collector keeps a 32-bit code and refuses an export with any
         // other; the span is still an error without it.
@@ -393,13 +402,17 @@ export function mcp(options: McpCaptureOptions) {
         record(response.result)?.isError === true
       ) {
         facts.isError = true;
-        failed(span, 'tool_error');
+        if (threw === undefined) failed(span, 'tool_error');
       }
       if (options.capturePayloads !== undefined)
         capture(options.capturePayloads, call, error ?? response.result);
     } else if (options.capturePayloads !== undefined)
       // A notification, or a request never answered: its request still goes.
       capture(options.capturePayloads, call, undefined);
+    // A handler that threw is a failed call, though the server answered the
+    // throw with an isError result of its own (result.is_error stays); a
+    // JSON-RPC error answer is that error, whatever raised it.
+    if (threw !== undefined && error === undefined) failed(span, threw.type);
     span.end();
   }
 
@@ -636,9 +649,7 @@ export function mcp(options: McpCaptureOptions) {
         );
       } catch (error) {
         for (const call of calls) {
-          call.span.setStatus({ code: SpanStatusCode.ERROR });
-          if (error instanceof Error)
-            call.span.setAttribute('error.type', error.name);
+          failed(call.span, thrownType(error));
           finish(call, undefined, null);
         }
         throw error;
@@ -671,6 +682,8 @@ export function mcp(options: McpCaptureOptions) {
               { step: false, mcpFacts: { layer: 'handler', method } },
             ),
             () => callback(...args),
+            undefined,
+            parent,
           ),
         );
       const envelope = record(ctx.mcpReq.envelope);
@@ -700,6 +713,8 @@ export function mcp(options: McpCaptureOptions) {
     callback: () => Result | Promise<Result>,
     /** A step's facts: alone, the handler carries what a transport span would. */
     step?: McpFacts,
+    /** The transport call this handler runs inside, told when it throws. */
+    parent?: Call,
   ): Promise<Result> {
     const { span } = started;
     return context.with(started.ctx, async () => {
@@ -711,8 +726,11 @@ export function mcp(options: McpCaptureOptions) {
         }
         return result;
       } catch (error) {
-        span.setStatus({ code: SpanStatusCode.ERROR });
-        if (error instanceof Error) span.setAttribute('error.type', error.name);
+        const type = thrownType(error);
+        failed(span, type);
+        // The server answers the throw itself (an isError result for a
+        // tool); the call it answers is still a failed call, not a failed result.
+        if (parent !== undefined) parent.threw = { type };
         throw error;
       } finally {
         span.end();

@@ -108,7 +108,8 @@ export interface BrowserOptions {
    * WebMCP tool arguments and results, off unless set (and only from this
    * API: a tag cannot carry a function). Each run goes to `redact` first;
    * what it returns goes, as JSON text, to the collector's
-   * `POST /ingest/browser/payloads`; null sends the run without content.
+   * `POST /ingest/browser/payloads?key=`, at most 1 MiB a call (cut to fit and
+   * flagged as truncated); null sends the run without content.
    */
   readonly capturePayloads?: {
     redact(
@@ -207,8 +208,7 @@ export function start(options: BrowserOptions): Agentrail {
     capture === undefined
       ? null
       : createPayloads({
-          endpoint: payloadsEndpoint(options.collector),
-          key: options.key,
+          endpoint: payloadsEndpoint(options.collector, options.key),
           tab,
           component,
           fetch: send,

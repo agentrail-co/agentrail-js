@@ -42,8 +42,8 @@ Call `start` once a page, as early as it can load.
 A tool's arguments and result are not sent unless you turn on
 `capturePayloads`, which only this API can do (a tag attribute cannot carry a
 function). Each run goes to your `redact` hook first; what it returns is sent
-as JSON text to the collector's `POST /ingest/browser/payloads`, and `null`
-sends the run without content:
+as JSON text to the collector's `POST /ingest/browser/payloads` (the key goes
+in its query, never the body), and `null` sends the run without content:
 
 ```js
 start({
@@ -56,6 +56,8 @@ start({
 });
 ```
 
+One payload call is at most 1 MiB: a larger run's arguments and result are cut
+to fit, never through a character, and flagged as truncated.
 A run whose payload call fails, takes longer than 25 s, or would put more than
 64 MiB of payloads on their way at once is still sent, without its payload,
 and `onError` is told. A closing

@@ -1,3 +1,4 @@
+import { checkBrowserPayloadCall } from 'agentrail-contract';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -148,6 +149,41 @@ describe('WebMCP tool runs', () => {
     expect(
       JSON.stringify([...site.fetched.map((call) => call.body)]),
     ).not.toContain('person@example.test');
+  });
+
+  // Fails if someone puts the key back in the body (the collector refuses a
+  // body that carries one: it reads the key from the address, before the
+  // body), sends it without URL-encoding, or lets a call grow past the
+  // collector's 1 MiB, where it refuses the whole call.
+  it('sends the key URL-encoded in the address, never the body, and cuts a call to 1 MiB', async () => {
+    const key = 'ajp_public+key/of=a&browser source#1';
+    const tools = webmcp();
+    const site = onPage({
+      ...quiet,
+      key,
+      capturePayloads: { redact: (run) => run },
+    });
+    tools.give('read', () => Promise.resolve('x'.repeat(2 * 1024 * 1024)));
+    await tools.run('read', {});
+    await settled();
+    const [sent, ...more] = site.fetched.filter((call) =>
+      call.url.startsWith(`${COLLECTOR}/payloads`),
+    );
+
+    expect(more).toEqual([]);
+    const address = new URL(sent?.url ?? 'about:blank');
+    expect(`${address.origin}${address.pathname}`).toBe(
+      `${COLLECTOR}/payloads`,
+    );
+    expect([...address.searchParams]).toEqual([['key', key]]);
+    const body = sent?.body ?? '';
+    const call: unknown = JSON.parse(body);
+    checkBrowserPayloadCall(call);
+    expect(body).not.toContain(key);
+    const size = new TextEncoder().encode(body).byteLength;
+    expect(size).toBeLessThanOrEqual(1024 * 1024);
+    expect(size).toBeGreaterThan(1024 * 1024 - 1024);
+    expect((call as BrowserPayloadCall).payload.responseTruncated).toBe(true);
   });
 
   // Fails if someone sends a payload the redact hook withheld, lets a
@@ -421,11 +457,13 @@ describe('payloads on their way', () => {
       },
       never,
     );
-    const large = 'x'.repeat(13 * 1024 * 1024);
+    // Each call is cut to the collector's 1 MiB: 64 fit on their way, and
+    // the 65th does not.
+    const large = 'x'.repeat(2 * 1024 * 1024);
     tools.give('read', () => Promise.resolve(large));
-    for (let index = 0; index < 5; index += 1) await tools.run('read', {});
+    for (let index = 0; index < 65; index += 1) await tools.run('read', {});
     expect(site.fetched.filter((call) => call.url === PAYLOADS)).toHaveLength(
-      4,
+      64,
     );
     expect(await runsOf(site)).toHaveLength(1);
     expect(errors).toEqual([expect.any(BrowserPayloadBudgetError)]);
@@ -455,7 +493,6 @@ describe('a payload cut to fit', () => {
   it('stays well-formed and within the budget wherever the cut falls', () => {
     const response = JSON.stringify({ text: '\u{1F600}'.repeat(5_000) });
     const call = {
-      key: 'ajp_public-key-of-the-browser-source',
       component: { name: 'agentrail-browser', version: '0', surfaces: [] },
       tab: 'tab',
       event: {} as BrowserPayloadCall['event'],

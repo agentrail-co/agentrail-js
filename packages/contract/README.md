@@ -5,8 +5,9 @@ reads a marker:
 
 - `ingestRequest`: the body of `POST /ingest/events`, as JSON Schema;
 - `browserCall`: the body of `POST /ingest/browser`, as JSON Schema;
-- `browserPayloadCall`: the body of `POST /ingest/browser/payloads`, one
-  WebMCP tool run with the content its page captured, as JSON Schema;
+- `browserPayloadCall`: the body of `POST /ingest/browser/payloads?key=`, one
+  WebMCP tool run with the content its page captured, as JSON Schema (the
+  key is in the query, never the body);
 - `markers`: markers the engine minted from fixed bytes, linked on fixed
   lanes, and read back from valid and broken input;
 - `notes`: what the collector also refuses that a schema cannot say.
@@ -25,9 +26,10 @@ Argus writes it (`apps/api/sdk-contract.json`, kept current by
 `apps/api/test/sdk-contract.test.ts`). It is copied here byte for byte and
 never edited here.
 
-Copied from Argus commit `ddb046d7fb5a884724e0f62fdf4441c64dee452c`,
-including standard MCP naming attributes and `tool_error` (sha256
-`6a0b1e13d364da92831ba495b30a42ae0c1da7119c771e4b4a11a2e93743f498`).
+Copied from Argus commit `78f9621d4673eab0f3e454575b98903352ee02f6`,
+including a thrown tool as a failed call and the browser payload call's key
+in its query (sha256
+`a25284880b58df53e19d2c2854cbe1bc66defb6349f7c9b96009c975ac628a19`).
 
 To take a newer one: copy argus's `apps/api/sdk-contract.json` over this
 file, change the commit above, and run `pnpm test`. A test that fails then

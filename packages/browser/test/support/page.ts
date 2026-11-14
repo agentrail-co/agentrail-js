@@ -10,7 +10,8 @@ import {
 
 export const KEY = 'ajp_public-key-of-the-browser-source';
 export const COLLECTOR = 'https://collector.example.test/ingest/browser';
-export const PAYLOADS = `${COLLECTOR}/payloads`;
+/** Where a payload call goes: the key in the query, never the body. */
+export const PAYLOADS = `${COLLECTOR}/payloads?key=${encodeURIComponent(KEY)}`;
 export const API = 'https://api.example.test';
 
 const cleanups: (() => void)[] = [];

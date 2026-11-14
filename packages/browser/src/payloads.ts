@@ -8,12 +8,13 @@ import {
 
 /**
  * A WebMCP tool run with the content its page captured
- * (`POST /ingest/browser/payloads`), for a site that turned payload capture
- * on. It goes as JSON text while the page is open, by a plain fetch: a
- * payload can be far larger than what a closing page may still send.
+ * (`POST /ingest/browser/payloads?key=<key>`), for a site that turned payload
+ * capture on. It goes as JSON text while the page is open, by a plain fetch:
+ * a payload can be far larger than what a closing page may still send. The
+ * key is in the address, never the body, so the collector refuses a wrong
+ * one before it reads the body.
  */
 export interface BrowserPayloadCall {
-  readonly key: string;
   readonly component: Component;
   readonly tab: string;
   readonly event: AgentrailEvent;
@@ -27,8 +28,8 @@ export interface BrowserPayloadCall {
   };
 }
 
-/** The most the collector takes in one payload call. */
-const MAX_PAYLOAD_CALL_BYTES = 16 * 1024 * 1024;
+/** The most the collector takes in one payload call: 1 MiB. */
+const MAX_PAYLOAD_CALL_BYTES = 1024 * 1024;
 /** The most payload text on its way at once, as the Node SDK holds at most. */
 const MAX_PENDING_BYTES = 64 * 1024 * 1024;
 /** How long a payload call may take: the edge's deadline for its calls. */
@@ -40,9 +41,8 @@ export class BrowserPayloadBudgetError extends Error {
 }
 
 export interface PayloadOptions {
-  /** The collector's `POST /ingest/browser/payloads`. */
+  /** The collector's `POST /ingest/browser/payloads`, with the key in its query (`payloadsEndpoint`). */
   readonly endpoint: string;
-  readonly key: string;
   readonly tab: string;
   readonly component: Component;
   readonly fetch: typeof fetch;
@@ -56,10 +56,15 @@ const encoder = new TextEncoder();
 const sizeOf = (value: unknown) =>
   encoder.encode(JSON.stringify(value)).byteLength;
 
-/** The payloads route beside the collector's `POST /ingest/browser`. */
-export function payloadsEndpoint(collector: string): string {
+/**
+ * The payloads route beside the collector's `POST /ingest/browser`, with the
+ * browser source's public key in its query (`?key=`, URL-encoded), which the
+ * collector checks before it reads the body.
+ */
+export function payloadsEndpoint(collector: string, key: string): string {
   const url = new URL(collector);
   url.pathname = `${url.pathname.replace(/\/+$/u, '')}/payloads`;
+  url.searchParams.set('key', key);
   return url.href;
 }
 
@@ -157,7 +162,6 @@ export function createPayloads(options: PayloadOptions): Payloads {
   /** The payload text of what is pending. */
   let held = 0;
   const base = {
-    key: options.key,
     component: options.component,
     tab: options.tab,
   };

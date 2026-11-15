@@ -127,6 +127,17 @@ export interface AgentrailEvent {
     readonly protocol?: string | null | undefined;
     /** The `Accept` the request sent. */
     readonly accept?: string | null | undefined;
+    /**
+     * What the caller's HTTP library wrote: its header names, comma-joined
+     * and never a value, and the `Accept-Encoding` it sent (null for none).
+     */
+    readonly transport?:
+      | {
+          readonly headerNames: string;
+          readonly acceptEncoding: string | null;
+        }
+      | null
+      | undefined;
     /** `Sec-Fetch-Site`, `-Mode` and `-Dest`, which a browser sends and a programmatic fetcher does not. */
     readonly fetchMetadata?:
       | {

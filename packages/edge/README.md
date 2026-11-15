@@ -11,7 +11,11 @@ makes is joined to the page it came from.
 
 Recording happens after the answer, so a visitor never waits for it and never
 sees it fail. A visitor's address and any verified identity leave the edge only
-as keyed hashes.
+as keyed hashes. With a request's `Accept` and `Accept-Encoding`, the edge
+sends the names of its headers, never their values: the names the caller
+wrote, lower-cased, without those your platform or a proxy added on the way
+(`cf-*`, `x-vercel-*`, `x-forwarded-*` and the like), at most 40 in 512
+characters.
 
 ## Install
 

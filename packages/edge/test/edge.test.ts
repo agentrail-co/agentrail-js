@@ -12,7 +12,7 @@ import {
   type AgentrailEvent,
   TRACE_HANDOFF_HEADER,
 } from 'agentrail-core';
-import { MARKERS, checkIngestRequest } from 'agentrail-contract';
+import { MARKERS, OTLP, checkIngestRequest } from 'agentrail-contract';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -24,6 +24,7 @@ import {
   type EdgeAdapter,
   type EdgeOptions,
 } from '../src/index.js';
+import { ADDED_ON_THE_WAY, HEADER_NAMES_KEPT } from '../src/edge.js';
 
 const HASH_KEY = 'k'.repeat(64);
 const ADDRESS = '203.0.113.7';
@@ -855,6 +856,83 @@ describe('the platform adapters', () => {
       city: 'München',
       region: 'BY',
       source: 'vercel',
+    });
+  });
+
+  // Fails if someone sends a name a proxy or the platform added on the way
+  // (Cloudflare's cf-*, x-forwarded-for, x-real-ip), drops a name the caller
+  // wrote, sends a value in a name's place, or passes what an event keeps.
+  it("records the caller's header names, never a value nor what the platform added, within what an event keeps", async () => {
+    const { send, events } = edgeBefore(() => new Response('ok'));
+    const url = `https://${DOCS}/guide.md`;
+    const caller = {
+      host: DOCS,
+      'user-agent': 'synthetic-agent/1.0',
+      accept: 'text/markdown, */*',
+      'accept-encoding': 'gzip, br',
+      'x-synthetic-client': 'SYNTHETIC_PRIVATE_VALUE',
+    };
+    const added = {
+      'cf-connecting-ip': ADDRESS,
+      'cf-ipcountry': 'US',
+      'cf-ray': '8f0000000000aaaa-SJC',
+      'cf-visitor': '{"scheme":"https"}',
+      'x-forwarded-for': ADDRESS,
+      'x-forwarded-proto': 'https',
+      'x-real-ip': ADDRESS,
+    };
+    const contract = new RegExp(
+      OTLP.headerNames.addedOnTheWay.pattern,
+      OTLP.headerNames.addedOnTheWay.flags,
+    );
+    expect(Object.keys(added).filter((name) => !contract.test(name))).toEqual(
+      [],
+    );
+    await send(new Request(url, { headers: { ...caller, ...added } }));
+    expect(events[0]?.actor.transport).toEqual({
+      headerNames: Object.keys(caller).sort().join(','),
+      acceptEncoding: 'gzip, br',
+    });
+    expect(JSON.stringify(events[0])).not.toContain('SYNTHETIC_PRIVATE_VALUE');
+
+    // Past 40 names, or 512 characters joined, the rest are left out whole;
+    // a request that sent no Accept-Encoding says so.
+    const many = Object.fromEntries(
+      Array.from({ length: 50 }, (_, index) => [
+        `x-${String(index).padStart(2, '0')}`,
+        'v',
+      ]),
+    );
+    const long = Object.fromEntries(
+      Array.from({ length: 6 }, (_, index) => [
+        `x-${String(index)}-${'n'.repeat(100)}`,
+        'v',
+      ]),
+    );
+    await send(new Request(url, { headers: many }));
+    await send(new Request(url, { headers: long }));
+    expect(events[1]?.actor.transport).toEqual({
+      headerNames: Object.keys(many).sort().slice(0, 40).join(','),
+      acceptEncoding: null,
+    });
+    expect(events[2]?.actor.transport?.headerNames).toBe(
+      Object.keys(long).sort().slice(0, 4).join(','),
+    );
+    // Nothing the caller wrote: nothing said of how it wrote it.
+    await send(new Request(url, { headers: { 'cf-ray': '8f0000000000bbbb' } }));
+    expect(events[3]?.actor.transport).toBeNull();
+  });
+
+  // Fails if a newer contract names another header no caller writes, or
+  // keeps fewer names, and the edge's copy is not brought level with it.
+  it('leaves out the names the contract says no caller writes, within its limits', () => {
+    expect(ADDED_ON_THE_WAY.source).toBe(
+      OTLP.headerNames.addedOnTheWay.pattern,
+    );
+    expect(ADDED_ON_THE_WAY.flags).toBe(OTLP.headerNames.addedOnTheWay.flags);
+    expect(HEADER_NAMES_KEPT).toEqual({
+      count: OTLP.headerNames.maxNames,
+      characters: OTLP.headerNames.maxCharacters,
     });
   });
 });

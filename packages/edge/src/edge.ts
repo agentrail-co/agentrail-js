@@ -38,7 +38,8 @@ import { MARKER_PARAMETER, markLinks, type MarkedHosts } from './links.js';
  * - the client address and any verified principal, hashed with the
  *   workspace's key before anything leaves;
  * - what the caller and the network said of it, for the collector's
- *   classifier of who the caller is: the `Accept` and fetch metadata, the
+ *   classifier of who the caller is: the `Accept`, the caller's header names
+ *   and `Accept-Encoding`, and fetch metadata, the
  *   platform's word on the network and its verified bots, and a Web Bot
  *   Auth signature checked against the keys the agent publishes.
  *
@@ -63,6 +64,18 @@ const SEND_WITHIN_MS = 25_000;
 
 /** The longest `Accept` the collector takes; a longer one is cut. */
 const ACCEPT_LENGTH = 256;
+/** The longest `Accept-Encoding` the collector takes; a longer one is cut. */
+const ACCEPT_ENCODING_LENGTH = 128;
+/**
+ * The header names no caller writes: what a proxy or the platform added on
+ * the way (Cloudflare's `cf-*`, Vercel's `x-vercel-*`, `x-forwarded-*`), and
+ * Agentrail's own first-party mark. The contract's
+ * (`otlp.headerNames.addedOnTheWay`); the tests hold this copy to it.
+ */
+export const ADDED_ON_THE_WAY =
+  /^(?:x-forwarded-.*|x-amzn-.*|x-vercel-.*|cf-.*|forwarded|via|x-real-ip|cdn-loop|true-client-ip|agentrail-first-party)$/iu;
+/** The most header names an event keeps, and the most characters they take joined (`otlp.headerNames`). */
+export const HEADER_NAMES_KEPT = { count: 40, characters: 512 } as const;
 /** The longest `Sec-Fetch-*` value the collector takes; the browsers' are one word. */
 const FETCH_METADATA_LENGTH = 32;
 /** The longest JA4 the collector takes. */
@@ -538,6 +551,7 @@ export function createEdge(options: EdgeOptions): Edge {
         clientVersion: null,
         protocol: null,
         accept: cut(request.headers.get('accept'), ACCEPT_LENGTH),
+        transport: transportOf(request.headers),
         fetchMetadata: fetchMetadataOf(request.headers),
         network:
           signals === null
@@ -738,6 +752,38 @@ function cut(value: string | null | undefined, length: number): string | null {
   return typeof value === 'string' && value.length > 0
     ? value.slice(0, length)
     : null;
+}
+
+/**
+ * How the caller's HTTP library wrote the request: its header names, the
+ * caller's own only, as a Fetch `Headers` holds them (lower-cased and
+ * sorted), within what an event keeps, a name past that left out whole; and
+ * its `Accept-Encoding`. Names only, never a value. Null where no name is
+ * the caller's.
+ */
+function transportOf(headers: Headers): AgentrailEvent['actor']['transport'] {
+  const kept: string[] = [];
+  let length = 0;
+  for (const name of headers.keys()) {
+    if (ADDED_ON_THE_WAY.test(name)) continue;
+    const grown = length + name.length + (kept.length === 0 ? 0 : 1);
+    if (
+      kept.length === HEADER_NAMES_KEPT.count ||
+      grown > HEADER_NAMES_KEPT.characters
+    )
+      break;
+    kept.push(name);
+    length = grown;
+  }
+  return kept.length === 0
+    ? null
+    : {
+        headerNames: kept.join(','),
+        acceptEncoding: cut(
+          headers.get('accept-encoding'),
+          ACCEPT_ENCODING_LENGTH,
+        ),
+      };
 }
 
 /** `Sec-Fetch-Site`, `-Mode` and `-Dest` together, as a browser sends all three. */

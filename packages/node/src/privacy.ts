@@ -192,6 +192,35 @@ function mcpAttributes(facts: McpFacts): Attributes {
   };
   for (const [key, value] of Object.entries(optional))
     if (value !== undefined) attrs[key] = value;
+  return { ...attrs, ...requestAttributes(facts) };
+}
+/**
+ * The request facts of a step whose message came by HTTP, as the contract's
+ * `mcpSpans.requestFacts` names them: the HTTP request's method, URL (its
+ * query cut to the marker lane, as on an HTTP span), user agent, header
+ * names, `Accept` and `Accept-Encoding`, the answer's status, and the
+ * message's JSON-RPC id. None over stdio.
+ */
+function requestAttributes(facts: McpFacts): Attributes {
+  const { request } = facts;
+  if (request === undefined) return {};
+  const optional = {
+    'http.request.method': boundedText(request.method, 4096),
+    'url.full': sanitizedUrl(request.url),
+    'http.response.status_code': facts.httpStatus,
+    'user_agent.original': boundedText(request.userAgent, 4096),
+    // Names only, never a value; already within their own bound.
+    'agentrail.http.request.header_names': request.headerNames,
+    'agentrail.http.request.accept': boundedText(request.accept, 4096),
+    'agentrail.http.request.accept_encoding': boundedText(
+      request.acceptEncoding,
+      4096,
+    ),
+    'agentrail.mcp.jsonrpc.id': boundedText(facts.jsonrpcId, 4096),
+  };
+  const attrs: Attributes = {};
+  for (const [key, value] of Object.entries(optional))
+    if (value !== undefined) attrs[key] = value;
   return attrs;
 }
 const PAYLOAD_ATTRIBUTES = [

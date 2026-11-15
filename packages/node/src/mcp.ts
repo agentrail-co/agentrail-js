@@ -11,7 +11,7 @@ import type { AgentrailNode } from './client.js';
 import { MCP_PAYLOAD_BYTES } from './limits.js';
 import { CaptureError } from './options.js';
 import { boundedText } from './privacy.js';
-import { internalOf, type McpFacts } from './runtime.js';
+import { internalOf, type McpFacts, type McpRequestFacts } from './runtime.js';
 
 /** One MCP call as the redact hook sees it, before anything leaves the process. */
 export interface McpPayload {
@@ -72,6 +72,12 @@ const PROTOCOL_VERSION = 'io.modelcontextprotocol/protocolVersion';
  * which it refuses the body unread.
  */
 const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
+/**
+ * The most of a request's header names a span carries, cut between names.
+ * The collector keeps 40 names in 512 characters, counted after it leaves
+ * out what a proxy added, so the SDK sends far more and leaves that to it.
+ */
+const HEADER_NAMES_CHARACTERS = 4096;
 
 function record(value: unknown): Message | undefined {
   return typeof value === 'object' && value !== null
@@ -83,6 +89,24 @@ function idKey(id: unknown): string | undefined {
   return typeof id === 'string' || typeof id === 'number'
     ? JSON.stringify(id)
     : undefined;
+}
+/** A JSON-RPC id as text, a number in decimal; undefined where there is none. */
+function idText(id: unknown): string | undefined {
+  return typeof id === 'string'
+    ? id
+    : typeof id === 'number' && Number.isFinite(id)
+      ? String(id)
+      : undefined;
+}
+/** Names comma-joined, whole names only, within HEADER_NAMES_CHARACTERS. */
+function joinedNames(names: Iterable<string>): string {
+  let text = '';
+  for (const name of names) {
+    const grown = text === '' ? name : `${text},${name}`;
+    if (grown.length > HEADER_NAMES_CHARACTERS) break;
+    text = grown;
+  }
+  return text;
 }
 /** JSON text as the MCP SDK encodes a message; undefined for what JSON cannot hold. */
 function jsonText(value: unknown): string | undefined {
@@ -300,10 +324,47 @@ export function mcp(options: McpCaptureOptions) {
   const internal = internalOf(options.client);
   const { runtime } = internal;
 
+  /**
+   * What the HTTP request that carried a message says of itself. Its header
+   * names as Node's HTTP server received them, in their order and case,
+   * where the SDK's HTTP instrumentation saw the request being answered;
+   * otherwise as the Fetch `Headers` hold them, lower-cased and sorted.
+   */
+  function requestFactsOf(request: Request): McpRequestFacts {
+    const { headers } = request;
+    const names = joinedNames(
+      runtime.state(context.active())?.headerNames ?? headers.keys(),
+    );
+    const userAgent = headers.get('user-agent');
+    const accept = headers.get('accept');
+    const acceptEncoding = headers.get('accept-encoding');
+    return {
+      method: request.method,
+      url: request.url,
+      ...(names === '' ? {} : { headerNames: names }),
+      ...(userAgent === null ? {} : { userAgent }),
+      ...(accept === null ? {} : { accept }),
+      ...(acceptEncoding === null ? {} : { acceptEncoding }),
+    };
+  }
+  /** Request facts and the JSON-RPC id, for a message that came by HTTP only. */
+  function carried(
+    facts: McpFacts,
+    id: unknown,
+    request: McpRequestFacts | undefined,
+  ): void {
+    if (request === undefined) return;
+    facts.request = request;
+    const text = idText(id);
+    if (text !== undefined) facts.jsonrpcId = text;
+  }
+
   function begin(
     message: Message,
     header: string | null | undefined,
     declared: Declared,
+    /** Undefined for a message that did not come by HTTP, as over stdio. */
+    request: McpRequestFacts | undefined,
   ): Call | undefined {
     const { method } = message;
     // A response the client sent back to a server request is not a call.
@@ -311,6 +372,7 @@ export function mcp(options: McpCaptureOptions) {
     const params = record(message.params);
     const name = nameOf(method, params);
     const facts: McpFacts = { layer: 'transport', method };
+    carried(facts, message.id, request);
     const bytes = jsonBytes(message);
     if (bytes !== undefined) facts.requestBytes = bytes;
     const client = clientOf(method, params, header, declared);
@@ -434,6 +496,9 @@ export function mcp(options: McpCaptureOptions) {
         message,
         extra?.request?.headers.get('mcp-protocol-version'),
         declared,
+        extra?.request === undefined
+          ? undefined
+          : requestFactsOf(extra.request),
       );
       if (call === undefined) {
         deliver();
@@ -516,6 +581,7 @@ export function mcp(options: McpCaptureOptions) {
   ): Response {
     // Only an id the server issued; one a request alone carried is not a session.
     const session = response.headers.get('mcp-session-id');
+    for (const call of calls) call.facts.httpStatus = response.status;
     const waiting = new Map<string, Call>();
     for (const call of calls) {
       const key = idKey(call.id);
@@ -622,12 +688,16 @@ export function mcp(options: McpCaptureOptions) {
         body = text === undefined ? undefined : parseJson(text);
       }
       const header = request.headers.get('mcp-protocol-version');
+      // Every message of a batch came by this one request.
+      const carrier = requestFactsOf(request);
       // A stateless request is its own connection: only an initialize in it declares the client.
       const declared: Declared = {};
       const calls = (Array.isArray(body) ? body : [body]).flatMap((item) => {
         const message = record(item);
         const call =
-          message === undefined ? undefined : begin(message, header, declared);
+          message === undefined
+            ? undefined
+            : begin(message, header, declared, carrier);
         return call === undefined ? [] : [call];
       });
       const [only] = calls;
@@ -695,6 +765,13 @@ export function mcp(options: McpCaptureOptions) {
         {},
       );
       const facts: McpFacts = { layer: 'handler', method };
+      // Alone, the handler is the step, and carries what a transport span would.
+      const request = ctx.http?.req;
+      carried(
+        facts,
+        ctx.mcpReq.id,
+        request === undefined ? undefined : requestFactsOf(request),
+      );
       if (typeof ctx.sessionId === 'string' && ctx.sessionId !== '')
         facts.sessionHash = runtime.hash(ctx.sessionId);
       return run(

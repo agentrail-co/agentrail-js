@@ -75,6 +75,10 @@ export interface OtlpContract {
       | 'responsePayload'
       | 'requestTruncated'
       | 'responseTruncated'
+      | 'headerNames'
+      | 'accept'
+      | 'acceptEncoding'
+      | 'jsonrpcId'
       | 'clientName'
       | 'clientVersion'
       | 'protocolVersion',
@@ -89,11 +93,29 @@ export interface OtlpContract {
       | 'errorTypes'
       | 'handler'
       | 'sizes'
+      | 'requestFacts'
       | 'session'
       | 'payloads',
       string
     >
   >;
+  /**
+   * Two MCP requests as their clients wrote them, and the request-fact
+   * attributes an SDK's step span carries for each (`mcpSpans.requestFacts`).
+   */
+  readonly mcpRequestFacts: {
+    readonly source: string;
+    readonly requests: readonly McpRecordedRequest[];
+  };
+  /** The header names no caller writes, and how many names an event keeps. */
+  readonly headerNames: {
+    readonly addedOnTheWay: {
+      readonly pattern: string;
+      readonly flags: string;
+    };
+    readonly maxNames: number;
+    readonly maxCharacters: number;
+  };
   readonly limits: {
     readonly bodyBytes: number;
     readonly records: number;
@@ -126,6 +148,16 @@ export interface OtlpContract {
   };
 }
 
+export interface McpRecordedRequest {
+  readonly name: string;
+  readonly harness: string;
+  readonly method: string;
+  readonly url: string;
+  /** Name and value, in the order and the case the client wrote them. */
+  readonly headers: readonly (readonly [string, string])[];
+  readonly body: Readonly<Record<string, unknown>>;
+  readonly attributes: Readonly<Record<string, string>>;
+}
 export interface McpCallFacts {
   readonly layer: 'transport' | 'handler';
   readonly method: string;

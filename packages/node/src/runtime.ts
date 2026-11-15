@@ -16,11 +16,37 @@ export interface State {
   readonly verifiedIngress: boolean;
   readonly links: import('@opentelemetry/api').Link[];
   readonly entry: { span?: Span };
+  /**
+   * The names of the incoming request's headers in the order and the case
+   * they arrived (Node's `rawHeaders`), never a value; undefined where the
+   * HTTP instrumentation did not see the request.
+   */
+  headerNames?: readonly string[];
+}
+/**
+ * What the HTTP request that carried an MCP message says of itself, as the
+ * contract's `mcpSpans.requestFacts` lists it. No header's value but these
+ * three, and the names of the rest.
+ */
+export interface McpRequestFacts {
+  readonly method: string;
+  readonly url: string;
+  readonly userAgent?: string;
+  /** Comma-joined, as received; undefined for a request that holds none. */
+  readonly headerNames?: string;
+  readonly accept?: string;
+  readonly acceptEncoding?: string;
 }
 /** What the MCP capture learns of one call, filled until its span ends. */
 export interface McpFacts {
   readonly layer: 'transport' | 'handler';
   readonly method: string;
+  /** Set only for a message that came by HTTP. */
+  request?: McpRequestFacts;
+  /** The message's JSON-RPC id as text; set only with `request`, and never for a notification. */
+  jsonrpcId?: string;
+  /** The status the HTTP answer carried, where the capture saw it before the call ended. */
+  httpStatus?: number;
   sessionHash?: string;
   requestBytes?: number;
   responseBytes?: number;

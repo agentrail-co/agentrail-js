@@ -143,6 +143,12 @@ export function httpCapture(runtime: Runtime) {
             new CaptureError('handoff_refused', 'context', 1),
           );
       }
+      // Names only (rawHeaders is name, value, name, value), kept for an MCP
+      // message this request carries: the order and case a client's HTTP
+      // library wrote say which library it is.
+      state.headerNames = request.rawHeaders.filter(
+        (_, index) => index % 2 === 0,
+      );
       requests.set(request.headers, ctx.setValue(runtime.stateKey, state));
       try {
         const location =

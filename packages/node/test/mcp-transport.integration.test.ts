@@ -48,10 +48,26 @@ function fixture(name: string) {
     handler: spans.find((span) => span.parentSpanId !== undefined),
   };
 }
+/**
+ * What a step whose message came by HTTP carries besides
+ * (`mcpSpans.requestFacts`). The span fixtures predate them, so a span is
+ * compared with those without these.
+ */
+const REQUEST_FACTS = [
+  'http.request.method',
+  'url.full',
+  'http.response.status_code',
+  'user_agent.original',
+  A.headerNames,
+  A.accept,
+  A.acceptEncoding,
+  A.jsonrpcId,
+];
 /** Every attribute name the contract names, in its tables or its fixtures. */
 const named = new Set([
   ...Object.values(OTLP.spanAttributes),
   ...Object.values(OTLP.mcpAttributes),
+  ...REQUEST_FACTS,
   ...OTLP.fixtures.accepted.flatMap((item) =>
     item.signal === 'traces'
       ? (
@@ -82,6 +98,8 @@ function facts(span: WireSpan): McpCallFacts {
 }
 const keysOf = (span: WireSpan | undefined) =>
   (span?.attributes ?? []).map((attribute) => attribute.key).sort();
+const keysBesidesRequestFacts = (span: WireSpan | undefined) =>
+  keysOf(span).filter((key) => !REQUEST_FACTS.includes(key));
 const hashOf = (id: string) =>
   createHmac('sha256', HASH_KEY).update(id).digest('hex').slice(0, 32);
 
@@ -239,7 +257,9 @@ describe('MCP transport capture', () => {
       const ok = byName('mcp.tools/call:synthetic_tool', 'transport');
       const okHandler = byName('mcp.tools/call:synthetic_tool', 'handler');
       const withHandler = fixture('sdk-mcp-transport-with-handler');
-      expect(keysOf(ok)).toEqual(withHandler.keys(withHandler.transport));
+      expect(keysBesidesRequestFacts(ok)).toEqual(
+        withHandler.keys(withHandler.transport),
+      );
       expect(keysOf(okHandler)).toEqual(withHandler.keys(withHandler.handler));
       expect(
         okHandler?.parentSpanId?.equals(ok?.spanId ?? Buffer.alloc(0)),
@@ -259,7 +279,7 @@ describe('MCP transport capture', () => {
 
       const missing = byName('mcp.tools/call:missing_tool', 'transport');
       const jsonRpcError = fixture('sdk-mcp-jsonrpc-error');
-      expect(keysOf(missing)).toEqual(
+      expect(keysBesidesRequestFacts(missing)).toEqual(
         jsonRpcError.keys(jsonRpcError.transport),
       );
       expect(missing?.status?.code).toBe(2);
@@ -275,7 +295,7 @@ describe('MCP transport capture', () => {
 
       const failing = byName('mcp.tools/call:failing_tool', 'transport');
       const toolError = fixture('sdk-mcp-tool-error-with-payload');
-      expect(keysOf(failing)).toEqual(
+      expect(keysBesidesRequestFacts(failing)).toEqual(
         toolError
           .keys(toolError.transport)
           .filter(

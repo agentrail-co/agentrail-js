@@ -14,8 +14,10 @@ What leaves your process is each step's facts: a request's method, route,
 status, user agent and URL (its query dropped, but for Agentrail's own
 markers); an MCP call's method, tool or prompt name, resource URI (without its
 userinfo, query or fragment), the client's self-reported name and version,
-message sizes and JSON-RPC error code; and identities only as keyed hashes.
-Request and response bodies, other headers and raw identities never leave it.
+message sizes, JSON-RPC id and error code, and, for a call that came over
+HTTP, the names of the request's headers with its `Accept` and
+`Accept-Encoding`; and identities only as keyed hashes. Request and response
+bodies, the values of other headers and raw identities never leave it.
 MCP tool arguments and results are not exported unless you turn on
 `capturePayloads`, and then only as your `redact` hook returns them. The same
 features are in the
@@ -116,7 +118,21 @@ past 4 MiB are served without a step:
 Each call carries its method and name, the client's self-reported name,
 version and protocol, the keyed hash of its `Mcp-Session-Id` (none for a
 stateless server), the size of the request and response as JSON, and its
-JSON-RPC error code or `isError` result. `capture.tool`, `capture.resource`
+JSON-RPC error code or `isError` result.
+
+A call that came over HTTP also carries what its HTTP request said of
+itself: the method, the URL (its query dropped, but for Agentrail's own
+markers), the user agent, `Accept` and `Accept-Encoding`, the names of its
+headers (never a value), and the call's JSON-RPC id; through `capture.handler`,
+the HTTP status of the answer too. Every message of a batch carries its
+request's. A client's HTTP library writes its headers in an order and case of
+its own, which say which client it is: where the SDK's HTTP instrumentation
+saw the request (`init`, or `httpOptions` in your own setup), the names are
+sent as Node received them; otherwise they come from the Fetch `Request`,
+which lower-cases and sorts them. Names are sent as received, those a proxy
+added too: Agentrail leaves those out. A call over stdio carries none of this.
+
+`capture.tool`, `capture.resource`
 and `capture.prompt` add the handler's own span inside the call, so a call is
 counted once; on their own, without a wrapped transport, each is the step.
 Inside a wrapped transport, a tool whose callback threw is a failed call: the

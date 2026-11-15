@@ -73,7 +73,7 @@ const ACCEPT_ENCODING_LENGTH = 128;
  * (`otlp.headerNames.addedOnTheWay`); the tests hold this copy to it.
  */
 export const ADDED_ON_THE_WAY =
-  /^(?:x-forwarded-.*|x-amzn-.*|x-vercel-.*|cf-.*|forwarded|via|x-real-ip|agentrail-first-party)$/iu;
+  /^(?:x-forwarded-.*|x-amzn-.*|x-vercel-.*|cf-.*|forwarded|via|x-real-ip|cdn-loop|true-client-ip|agentrail-first-party)$/iu;
 /** The most header names an event keeps, and the most characters they take joined (`otlp.headerNames`). */
 export const HEADER_NAMES_KEPT = { count: 40, characters: 512 } as const;
 /** The longest `Sec-Fetch-*` value the collector takes; the browsers' are one word. */

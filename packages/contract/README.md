@@ -28,10 +28,10 @@ Argus writes it (`apps/api/sdk-contract.json`, kept current by
 `apps/api/test/sdk-contract.test.ts`). It is copied here byte for byte and
 never edited here.
 
-Copied from Argus commit `9625ffe6e2b60cd539a8fbd18445273d437c93fd`,
+Copied from Argus commit `7ec113b24b253d93f85633eb3e3caabd445e145a`,
 including the request facts an MCP span carries and the header names no
 caller writes (sha256
-`20adfff8a062274d104e9251e36834c3ef1b92821b03fc0a5d44ad86070afcba`).
+`6f6a7b28c1a5249b8105f126e0bc62e97a0ee5e9cb38088ef56d3fab2524694a`).
 
 To take a newer one: copy argus's `apps/api/sdk-contract.json` over this
 file, change the commit above, and run `pnpm test`. A test that fails then

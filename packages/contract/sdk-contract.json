@@ -4154,7 +4154,7 @@
     },
     "headerNames": {
       "addedOnTheWay": {
-        "pattern": "^(?:x-forwarded-.*|x-amzn-.*|x-vercel-.*|cf-.*|forwarded|via|x-real-ip|cdn-loop|true-client-ip|agentrail-first-party)$",
+        "pattern": "^(?:x-forwarded-.*|x-amzn-.*|x-vercel-.*|cf-.*|forwarded|via|x-real-ip|cdn-loop|true-client-ip|logs-url|x-invocation-id|agentrail-first-party)$",
         "flags": "iu"
       },
       "maxNames": 40,

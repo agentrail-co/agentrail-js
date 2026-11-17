@@ -22,6 +22,8 @@ export interface State {
    * HTTP instrumentation did not see the request.
    */
   headerNames?: readonly string[];
+  /** What a CLI's `x-agentrail-cli` header said of the request, as span attributes (`cli.ts`). */
+  cli?: Attributes | undefined;
 }
 /**
  * What the HTTP request that carried an MCP message says of itself, as the

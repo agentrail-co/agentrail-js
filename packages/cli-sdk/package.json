@@ -1,0 +1,45 @@
+{
+  "name": "agentrail-cli-sdk",
+  "version": "0.4.0",
+  "description": "Agentrail for a CLI: tells your own API which command an agent ran, in which run and session, so the agent's CLI calls join its journey.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agentrail-co/agentrail-js.git",
+    "directory": "packages/cli-sdk"
+  },
+  "homepage": "https://github.com/agentrail-co/agentrail-js/tree/main/packages/cli-sdk#readme",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "agentrail-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@oclif/core": "5.1.12",
+    "@types/node": "24.13.3",
+    "@types/yargs": "17.0.35",
+    "agentrail-contract": "workspace:*",
+    "commander": "15.1.0",
+    "yargs": "18.2.0",
+    "yargs-17": "npm:yargs@17.7.2"
+  }
+}

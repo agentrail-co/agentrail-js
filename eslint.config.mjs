@@ -2,7 +2,14 @@ import eslintConfigPrettier from 'eslint-config-prettier';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['**/dist/**', '**/node_modules/**'] },
+  {
+    ignores: [
+      '**/dist/**',
+      '**/node_modules/**',
+      // A CLI oclif loads from disk in a test, written as one would ship it.
+      'packages/cli-sdk/test/fixtures/**',
+    ],
+  },
   ...tseslint.configs.strictTypeChecked,
   ...tseslint.configs.stylisticTypeChecked,
   {

@@ -5,14 +5,16 @@
 
 What every Agentrail component shares, wherever the Fetch API and WebCrypto
 run: the event the collector takes, markers, the workspace's keyed hash, W3C
-trace context, the session cookie, the signed trace handoff, the Web Bot Auth
-check and the client that sends events to the collector.
+trace context, the session cookie, the signed trace handoff, the header a
+CLI sends its own API, the Web Bot Auth check and the client that sends events
+to the collector.
 
 **To record a site, install one of these instead**:
 [`agentrail-edge`](https://www.npmjs.com/package/agentrail-edge),
-[`agentrail-browser`](https://www.npmjs.com/package/agentrail-browser) or
-[`agentrail-node`](https://www.npmjs.com/package/agentrail-node). They are
-built on this package. Install it directly only to build a component of your
+[`agentrail-browser`](https://www.npmjs.com/package/agentrail-browser),
+[`agentrail-node`](https://www.npmjs.com/package/agentrail-node), or
+[`agentrail-cli-sdk`](https://www.npmjs.com/package/agentrail-cli-sdk) in a
+CLI. They are built on this package. Install it directly only to build a component of your
 own:
 
 ```sh

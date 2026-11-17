@@ -1,12 +1,14 @@
 /**
  * What every Agentrail component shares, in any runtime with the Fetch API
  * and WebCrypto: the event the collector takes, markers, the keyed hash,
- * trace context, the session, and the client that sends events. Nothing
+ * trace context, the session, the header a CLI sends its own API, and the
+ * client that sends events. Nothing
  * here imports Node, the DOM or OpenTelemetry.
  */
 export {
   SURFACES,
   type AgentrailEvent,
+  type CliFacts,
   type IpLocation,
   type ClockSource,
   type Component,
@@ -50,6 +52,17 @@ export {
   type TraceHandoffVerificationInput,
   type TraceHandoffRefusal,
 } from './trace-handoff.js';
+export {
+  CLI_HEADER,
+  CLI_MODES,
+  CLI_SESSION_SOURCES,
+  CliHeaderInputError,
+  formatCliHeader,
+  readCliHeader,
+  type CliHeader,
+  type CliMode,
+  type CliSessionSource,
+} from './cli-header.js';
 export { newId } from './id.js';
 export {
   KNOWN_SIGNERS,

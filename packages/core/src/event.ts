@@ -196,8 +196,31 @@ export interface AgentrailEvent {
    * arguments or result, only their JSON size.
    */
   readonly webmcp?: WebMcpRun | null | undefined;
+  /**
+   * What a customer's CLI said of itself on this request, in its
+   * `x-agentrail-cli` header (`readCliHeader`): claims, all of it. The
+   * session it named is the step's `session`, as a keyed hash.
+   */
+  readonly cli?: CliFacts | null | undefined;
   /** What was hashed or dropped here, and why. */
   readonly redactions: { readonly field: string; readonly reason: string }[];
+}
+
+/** A CLI's header as an event carries it: everything but its session, which is the step's. */
+export interface CliFacts {
+  readonly name: string;
+  readonly version: string | null;
+  /** By the words the CLI's code declared, never its arguments. */
+  readonly command: string | null;
+  readonly run: string;
+  readonly sequence: number;
+  readonly mode: 'agent' | 'ci' | 'interactive' | 'non-interactive';
+  readonly sessionFrom: 'agent' | 'ci' | 'local' | 'run';
+  readonly agent: string | null;
+  readonly agentVersion: string | null;
+  /** The names of the variables the agent or CI was told by, never their values. */
+  readonly evidence: readonly string[];
+  readonly sdkVersion: string;
 }
 
 /** How a WebMCP tool run ended: `is_error` for a result that said it failed. */

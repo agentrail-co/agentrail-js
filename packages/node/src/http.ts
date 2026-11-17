@@ -8,11 +8,13 @@ import type {
   UndiciRequest,
 } from '@opentelemetry/instrumentation-undici';
 import {
+  CLI_HEADER,
   encodeTraceHandoff,
   readTraceHandoff,
   TRACE_HANDOFF_HEADER,
   parseTraceparent,
 } from 'agentrail-core';
+import { cliAttributesOf } from './cli.js';
 import { isCaptureSuppressed } from './suppression.js';
 import { CaptureError } from './options.js';
 import type { Runtime, State } from './runtime.js';
@@ -24,6 +26,12 @@ const ownedHeaders = [
   'baggage',
   TRACE_HANDOFF_HEADER,
 ];
+/**
+ * What a managed request never sends on as the server received it: the
+ * owned trace headers, and a CLI's `x-agentrail-cli`, which names the CLI's
+ * run and session to this server alone.
+ */
+const strippedHeaders = [...ownedHeaders, CLI_HEADER];
 function single(value: string | string[] | undefined): string | null {
   return typeof value === 'string' ? value : null;
 }
@@ -149,6 +157,7 @@ export function httpCapture(runtime: Runtime) {
       state.headerNames = request.rawHeaders.filter(
         (_, index) => index % 2 === 0,
       );
+      state.cli = cliAttributesOf(request.rawHeaders, (id) => runtime.hash(id));
       requests.set(request.headers, ctx.setValue(runtime.stateKey, state));
       try {
         const location =
@@ -193,7 +202,7 @@ export function httpCapture(runtime: Runtime) {
       }
       const metadata = runtime.spans.get(span);
       if (metadata === undefined) return;
-      for (const header of ownedHeaders) request.removeHeader(header);
+      for (const header of strippedHeaders) request.removeHeader(header);
       const port = ports.get(span);
       // Public ClientRequest.host is the actual connection hostname; its Host header may be overridden.
       const hostname =
@@ -243,7 +252,7 @@ function stripUndiciHeaders(request: UndiciRequest): void {
       .split('\r\n')
       .filter(
         (line) =>
-          !ownedHeaders.includes(
+          !strippedHeaders.includes(
             line.slice(0, line.indexOf(':')).toLowerCase(),
           ),
       )
@@ -256,7 +265,7 @@ function stripUndiciHeaders(request: UndiciRequest): void {
       if (
         typeof name === 'string' &&
         value !== undefined &&
-        !ownedHeaders.includes(name.toLowerCase())
+        !strippedHeaders.includes(name.toLowerCase())
       )
         headers.push(name, value);
     }

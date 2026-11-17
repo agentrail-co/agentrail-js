@@ -1,0 +1,14 @@
+{
+  "name": "oclif-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "oclif": {
+    "bin": "oc",
+    "commands": "./commands",
+    "topicSeparator": " ",
+    "hooks": {
+      "prerun": "./hooks/prerun.js"
+    }
+  }
+}

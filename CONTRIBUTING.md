@@ -1,7 +1,7 @@
 # Contributing to agentrail-js
 
-The repository holds four published packages (`packages/core`, `edge`,
-`browser`, `node`) and a private one, `packages/contract`, which checks the
+The repository holds five published packages (`packages/core`, `edge`,
+`browser`, `node`, `cli-sdk`) and a private one, `packages/contract`, which checks the
 packages against the collector's contract. Read [AGENTS.md](AGENTS.md) for the
 rules a change follows.
 
@@ -19,9 +19,9 @@ One package: `pnpm --filter agentrail-edge test`.
 
 ## Releasing
 
-The four packages share one version, bumped together in each
+The five packages share one version, bumped together in each
 `packages/*/package.json` and `packages/core/src/version.ts`, and are released
-together: a `v<version>` tag publishes all four
+together: a `v<version>` tag publishes all five
 (`.github/workflows/release.yml`). A version such as `0.2.0` goes to npm's
 `latest` tag, and a trial build such as `0.2.0-dev.1` to `next`.
 

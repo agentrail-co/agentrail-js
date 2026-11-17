@@ -107,8 +107,13 @@ export function copySpan(
         attrs[`agentrail.client.location.${field}`] = boundedText(value, 128);
     }
   }
-  if (span.kind === SpanKind.SERVER)
+  if (span.kind === SpanKind.SERVER) {
     attrs['agentrail.ingress.verified'] = metadata.state.verifiedIngress;
+    // Only the request's own entry span: a CLI's header says nothing of the
+    // calls this server makes while answering it.
+    if (metadata.state.cli !== undefined)
+      Object.assign(attrs, metadata.state.cli);
+  }
   if (mark !== undefined)
     Object.assign(attrs, {
       'agentrail.step': true,

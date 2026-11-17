@@ -15,11 +15,13 @@ where it happens and send it to Agentrail, which links the steps into journeys.
 | [`agentrail-edge`](https://www.npmjs.com/package/agentrail-edge)       | [![npm](https://img.shields.io/npm/v/agentrail-edge)](https://www.npmjs.com/package/agentrail-edge)       | Every request to your site, including agents that never run JavaScript. Cloudflare Workers, Vercel, Fetch API |
 | [`agentrail-browser`](https://www.npmjs.com/package/agentrail-browser) | [![npm](https://img.shields.io/npm/v/agentrail-browser)](https://www.npmjs.com/package/agentrail-browser) | Page views, your pages' own calls and WebMCP tool calls. Most sites use the hosted tag instead                |
 | [`agentrail-node`](https://www.npmjs.com/package/agentrail-node)       | [![npm](https://img.shields.io/npm/v/agentrail-node)](https://www.npmjs.com/package/agentrail-node)       | Your Node servers: requests, verified identity, milestones, logs and MCP calls                                |
+| [`agentrail-cli-sdk`](https://www.npmjs.com/package/agentrail-cli-sdk) | [![npm](https://img.shields.io/npm/v/agentrail-cli-sdk)](https://www.npmjs.com/package/agentrail-cli-sdk) | Your CLI: tells your API which command an agent ran, in which run and session                                 |
 | [`agentrail-core`](https://www.npmjs.com/package/agentrail-core)       | [![npm](https://img.shields.io/npm/v/agentrail-core)](https://www.npmjs.com/package/agentrail-core)       | What the others share. Only for building a component of your own                                              |
 
 Start with the edge if agents read your site, add the browser tag for pages
 people and browser agents use, and add a server SDK where the real work
-happens. Servers in other languages: [Go](https://github.com/agentrail-co/agentrail-go)
+happens. If agents run a CLI of yours, add the CLI SDK to it, so its
+calls to your API join the agent's journey. Servers in other languages: [Go](https://github.com/agentrail-co/agentrail-go)
 and [Python](https://github.com/agentrail-co/agentrail-python), with the same features.
 
 Each package needs Node 22 or later to install. Your credentials come from
@@ -71,6 +73,19 @@ export const agentrail = await init({
 });
 ```
 
+**CLI** (`npm install agentrail-cli-sdk`), before your CLI parses its arguments:
+
+```ts
+import { instrumentCli } from 'agentrail-cli-sdk';
+
+const agentrail = instrumentCli({
+  name: 'acme',
+  version: pkg.version,
+  origins: ['https://api.acme.com'],
+});
+agentrail.commander(program); // or .yargs, .oclif, .command('deploy create')
+```
+
 ## Documentation
 
 - [Journeys](https://www.agentrail.co/docs/guides/journeys): what a journey is, and setting up sources
@@ -80,7 +95,7 @@ export const agentrail = await init({
 - [Leave out your own servers](https://www.agentrail.co/docs/guides/journeys-own-servers)
 - [What Agentrail records](https://www.agentrail.co/docs/guides/journeys-data)
 
-The four packages share one version. Before 1.0, a minor version (0.1 to 0.2)
+The five packages share one version. Before 1.0, a minor version (0.1 to 0.2)
 may change what they offer.
 
 ## Support

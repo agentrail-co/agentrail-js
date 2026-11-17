@@ -17,6 +17,10 @@ reads a marker:
   names no caller writes (`headerNames`), bounds and synthetic
   accepted/refused exports for traces and logs;
 - `traceHandoff`: header, age bound and independently calculated signing vectors.
+- `cliHeader`: the `x-agentrail-cli` header a CLI sends its own API (its
+  members, how it is read, how a CLI derives its session) and vectors every
+  writer and reader checks; `otlp.cliAttributes` and `otlp.cliSpans` are what
+  a server SDK sends for it.
 
 The engine is private to Argus, so these packages' tests check what they
 build against this file instead (`src/index.ts`). This package is never
@@ -28,10 +32,10 @@ Argus writes it (`apps/api/sdk-contract.json`, kept current by
 `apps/api/test/sdk-contract.test.ts`). It is copied here byte for byte and
 never edited here.
 
-Copied from Argus commit `7ec113b24b253d93f85633eb3e3caabd445e145a`,
-including the request facts an MCP span carries and the header names no
-caller writes (sha256
-`6f6a7b28c1a5249b8105f126e0bc62e97a0ee5e9cb38088ef56d3fab2524694a`).
+Copied from Argus commit `2f8eb71d8`, branch `feat/cli-journeys`,
+including the request facts an MCP span carries, the header names no
+caller writes, and the CLI header with the event's `cli` (sha256
+`432f62c7174d298bc3ad176a909322b7d7726d316e58af6d5f0cf88339f9af70`).
 
 To take a newer one: copy argus's `apps/api/sdk-contract.json` over this
 file, change the commit above, and run `pnpm test`. A test that fails then

@@ -162,6 +162,14 @@ export. At most 64 MiB of payload text waits to be sent: past that, calls go
 without their payloads and `onError` is told (`payload_budget`), as it is when
 `redact` throws or returns what JSON cannot hold (`payload_redact_failed`).
 
+## Your CLI's calls
+
+When your CLI uses [`agentrail-cli-sdk`](https://www.npmjs.com/package/agentrail-cli-sdk),
+each request it makes to this server says which command an agent ran, in
+which run and session. The SDK records that on the request's step, with the
+session sent only as a keyed hash, so the agent's CLI runs join its journey.
+Nothing to configure here.
+
 ## Documentation
 
 | Topic                                                                                                              | Guide                                                                                   |

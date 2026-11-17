@@ -18,6 +18,49 @@ interface Contract {
   readonly markers: Markers;
   readonly traceHandoff: TraceHandoffContract;
   readonly otlp: OtlpContract;
+  readonly cliHeader: CliHeaderContract;
+}
+
+/** What a CLI's `x-agentrail-cli` header reads as, in `agentrail-core`'s names. */
+export interface CliHeaderReads {
+  readonly sdkVersion: string;
+  readonly cli: string;
+  readonly cliVersion?: string;
+  readonly run: string;
+  readonly sequence: number;
+  readonly session: string;
+  readonly sessionFrom: string;
+  readonly mode: string;
+  readonly agent?: string;
+  readonly agentVersion?: string;
+  readonly evidence?: readonly string[];
+  readonly command?: string;
+}
+
+export interface CliHeaderContract {
+  readonly header: string;
+  readonly notes: readonly string[];
+  readonly vectors: {
+    readonly header: { readonly value: string; readonly reads: CliHeaderReads };
+    readonly later: { readonly value: string; readonly reads: CliHeaderReads };
+    readonly unread: readonly string[];
+    readonly sessionKeys: readonly {
+      readonly scope: string;
+      readonly from: string;
+      readonly source: string;
+      readonly key: string;
+    }[];
+    readonly sessionFiles: readonly {
+      readonly scope: string;
+      readonly agent: string | null;
+      readonly file: string;
+    }[];
+    readonly keyedSession: {
+      readonly hashKey: string;
+      readonly session: string;
+      readonly hash: string;
+    };
+  };
 }
 
 export interface TraceHandoffContract {
@@ -85,6 +128,26 @@ export interface OtlpContract {
       string
     >
   >;
+  /** The attributes a server SDK sets from a CLI's header, by role. */
+  readonly cliAttributes: Readonly<
+    Record<
+      | 'name'
+      | 'version'
+      | 'command'
+      | 'run'
+      | 'sequence'
+      | 'mode'
+      | 'sessionHash'
+      | 'sessionFrom'
+      | 'agent'
+      | 'agentVersion'
+      | 'evidence'
+      | 'sdkVersion',
+      string
+    >
+  >;
+  /** What a CLI's request span carries, in words. */
+  readonly cliSpans: string;
   /** What an MCP span is, in words: its name, layers, error types, sizes, session and payloads. */
   readonly mcpSpans: Readonly<
     Record<
@@ -222,6 +285,7 @@ const contract = JSON.parse(
 ) as Contract;
 
 export const TRACE_HANDOFF = contract.traceHandoff;
+export const CLI_HEADER_CONTRACT = contract.cliHeader;
 export const OTLP = contract.otlp;
 
 // Strict: a schema JSON Schema forbids is refused here, not read loosely.

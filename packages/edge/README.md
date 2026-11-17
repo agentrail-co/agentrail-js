@@ -17,6 +17,12 @@ wrote, lower-cased, without those your platform or a proxy added on the way
 (`cf-*`, `x-vercel-*`, `x-forwarded-*` and the like), at most 40 in 512
 characters.
 
+A request from a CLI that uses
+[`agentrail-cli-sdk`](https://www.npmjs.com/package/agentrail-cli-sdk) says
+which command an agent ran, in which run and session. The edge records it
+on the request's step, with the session as a keyed hash in place of the
+visit cookie a CLI never sends back, and passes the header on to your origin.
+
 ## Install
 
 ```sh

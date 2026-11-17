@@ -203,27 +203,38 @@ function readMember(reader: Reader): Member {
 
 /** A Dictionary: `key=value, key=(a b);p=1, flag`. A key given twice keeps the last. */
 export function parseDictionary(text: string): Map<string, Member> {
+  return new Map(parseDictionaryMembers(text));
+}
+
+/**
+ * A Dictionary's members in the order written, a key given twice included:
+ * for a reader to whom a repeated key means two header lines were joined.
+ */
+export function parseDictionaryMembers(text: string): [string, Member][] {
   const reader = new Reader(text);
-  const dictionary = new Map<string, Member>();
+  const members: [string, Member][] = [];
   reader.skipSpaces();
   while (!reader.done()) {
     const key = readKey(reader);
     if (reader.peek() === '=') {
       reader.next();
-      dictionary.set(key, readMember(reader));
+      members.push([key, readMember(reader)]);
     } else
-      dictionary.set(key, {
-        kind: 'item',
-        value: { kind: 'boolean', value: true },
-        parameters: readParameters(reader),
-      });
+      members.push([
+        key,
+        {
+          kind: 'item',
+          value: { kind: 'boolean', value: true },
+          parameters: readParameters(reader),
+        },
+      ]);
     reader.skipWhitespace();
-    if (reader.done()) return dictionary;
+    if (reader.done()) return members;
     reader.expect(',');
     reader.skipWhitespace();
     if (reader.done()) throw new StructuredFieldError('A trailing comma.');
   }
-  return dictionary;
+  return members;
 }
 
 /** One Item on its own: `"https://signer.example"` or `token;p=1`. */
@@ -280,4 +291,24 @@ export function serializeItem(item: Item): string {
 
 export function serializeInnerList(list: InnerList): string {
   return `(${list.items.map(serializeItem).join(' ')})${serializeParameters(list.parameters)}`;
+}
+
+/** A Dictionary as the RFC writes it: `key=value, key=(a b), flag`. */
+export function serializeDictionary(
+  dictionary: ReadonlyMap<string, Member>,
+): string {
+  const members: string[] = [];
+  for (const [key, member] of dictionary) {
+    if (
+      member.kind === 'item' &&
+      member.value.kind === 'boolean' &&
+      member.value.value
+    )
+      members.push(`${key}${serializeParameters(member.parameters)}`);
+    else
+      members.push(
+        `${key}=${member.kind === 'item' ? serializeItem(member) : serializeInnerList(member)}`,
+      );
+  }
+  return members.join(', ');
 }

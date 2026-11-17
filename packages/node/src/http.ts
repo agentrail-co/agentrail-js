@@ -13,6 +13,7 @@ import {
   TRACE_HANDOFF_HEADER,
   parseTraceparent,
 } from 'agentrail-core';
+import { cliAttributesOf } from './cli.js';
 import { isCaptureSuppressed } from './suppression.js';
 import { CaptureError } from './options.js';
 import type { Runtime, State } from './runtime.js';
@@ -149,6 +150,7 @@ export function httpCapture(runtime: Runtime) {
       state.headerNames = request.rawHeaders.filter(
         (_, index) => index % 2 === 0,
       );
+      state.cli = cliAttributesOf(request.rawHeaders, (id) => runtime.hash(id));
       requests.set(request.headers, ctx.setValue(runtime.stateKey, state));
       try {
         const location =

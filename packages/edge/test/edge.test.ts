@@ -12,7 +12,12 @@ import {
   type AgentrailEvent,
   TRACE_HANDOFF_HEADER,
 } from 'agentrail-core';
-import { MARKERS, OTLP, checkIngestRequest } from 'agentrail-contract';
+import {
+  CLI_HEADER_CONTRACT,
+  MARKERS,
+  OTLP,
+  checkIngestRequest,
+} from 'agentrail-contract';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -509,6 +514,63 @@ describe('the edge', () => {
         hashKeyId: await hashKeyIdOf(HASH_KEY),
       },
     ]);
+  });
+
+  // Fails if someone stops reading a CLI's header, keys its session by the
+  // visit cookie a CLI never sends back, sends the session unhashed, or lets
+  // the header off the event: a CLI's runs would each be a journey of their
+  // own, or its session would leave the customer as the CLI gave it. Fails
+  // too if a header that does not read sets anything, or the origin stops
+  // being sent it (its server SDK reads it as well).
+  it("records what a CLI's header says, and the session it named, keyed and by day", async () => {
+    const { send, events, forwarded } = edgeBefore(() => new Response('{}'));
+    const { header, unread } = CLI_HEADER_CONTRACT.vectors;
+    const request = () =>
+      new Request(`https://${APP}/v1/deployments`, {
+        method: 'POST',
+        headers: { 'x-agentrail-cli': header.value },
+        body: '{}',
+      });
+    await send(request());
+    await send(request());
+    for (const value of unread.filter((text) => text !== ''))
+      await send(
+        new Request(`https://${APP}/v1/deployments`, {
+          headers: { 'x-agentrail-cli': value },
+        }),
+      );
+    const [first, second, ...rest] = events;
+    const day = Math.floor((first?.start ?? 0) / (24 * 60 * 60 * 1000));
+    const hash = await keyedHash(HASH_KEY, header.reads.session);
+    expect(first?.session).toEqual({
+      id: `cli:${hash}:${String(day)}`,
+      previousId: null,
+    });
+    expect(second?.session).toEqual(first?.session);
+    expect(first?.cli).toEqual({
+      name: header.reads.cli,
+      version: header.reads.cliVersion,
+      command: header.reads.command,
+      run: header.reads.run,
+      sequence: header.reads.sequence,
+      mode: header.reads.mode,
+      sessionFrom: header.reads.sessionFrom,
+      agent: header.reads.agent,
+      agentVersion: header.reads.agentVersion,
+      evidence: header.reads.evidence,
+      sdkVersion: header.reads.sdkVersion,
+    });
+    expect(first?.redactions).toContainEqual({
+      field: 'session.id',
+      reason: 'keyed_hash',
+    });
+    expect(JSON.stringify(events)).not.toContain(header.reads.session);
+    for (const event of rest) {
+      expect(event.cli).toBeUndefined();
+      expect(event.session?.id.startsWith('cli:')).toBe(false);
+    }
+    expect(rest).toHaveLength(unread.length - 1);
+    expect(forwarded[0]?.headers.get('x-agentrail-cli')).toBe(header.value);
   });
 
   // Fails if someone lets a throwing identify lose the request's event, or

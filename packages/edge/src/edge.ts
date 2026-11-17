@@ -1,5 +1,7 @@
 import {
+  CLI_HEADER,
   createCollector,
+  readCliHeader,
   TRACE_HANDOFF_HEADER,
   signTraceHandoff,
   traceHandoffTarget,
@@ -15,6 +17,7 @@ import {
   sessionCookie,
   VERSION,
   type AgentrailEvent,
+  type CliFacts,
   type Collector,
   type PrincipalKind,
   type SignatureVerifier,
@@ -61,6 +64,9 @@ const MARKABLE_BYTES = 2 * 1024 * 1024;
  * `identify`.
  */
 const SEND_WITHIN_MS = 25_000;
+
+/** A CLI's session ends with its UTC day, as the collector keys an MCP session's. */
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** The longest `Accept` the collector takes; a longer one is cut. */
 const ACCEPT_LENGTH = 256;
@@ -476,6 +482,38 @@ export function createEdge(options: EdgeOptions): Edge {
     });
   }
 
+  /**
+   * What a customer's CLI said of itself (`x-agentrail-cli`, written by
+   * agentrail-cli-sdk), and the session it named: the keyed hash of its
+   * session and the UTC day the request started, in place of the visit
+   * cookie a CLI never sends back. Null for a request with no header that
+   * reads.
+   */
+  async function cliOf(
+    request: RequestHead,
+    start: number,
+  ): Promise<{ facts: CliFacts; session: string } | null> {
+    const header = readCliHeader(request.headers.get(CLI_HEADER));
+    if (header === null) return null;
+    const hash = await keyedHash(hashKey, header.session);
+    return {
+      facts: {
+        name: header.cli,
+        version: header.cliVersion ?? null,
+        command: header.command ?? null,
+        run: header.run,
+        sequence: header.sequence,
+        mode: header.mode,
+        sessionFrom: header.sessionFrom,
+        agent: header.agent ?? null,
+        agentVersion: header.agentVersion ?? null,
+        evidence: header.evidence ?? [],
+        sdkVersion: header.sdkVersion,
+      },
+      session: `cli:${hash}:${String(Math.floor(start / DAY_MS))}`,
+    };
+  }
+
   async function eventOf(input: {
     request: RequestHead;
     url: URL;
@@ -498,6 +536,7 @@ export function createEdge(options: EdgeOptions): Edge {
     const principal = await principalOf(request);
     const actingUserId = principal?.actingUserId ?? null;
     const signature = await verify(request);
+    const cli = await cliOf(request, input.start);
     const { signals } = input;
     return {
       schemaVersion: 1,
@@ -521,7 +560,7 @@ export function createEdge(options: EdgeOptions): Edge {
         subtreeSpanIds: [],
         links: input.caller === null ? [] : [input.caller],
       },
-      session: { id: input.session, previousId: null },
+      session: { id: cli?.session ?? input.session, previousId: null },
       http: {
         method: request.method,
         host,
@@ -586,6 +625,7 @@ export function createEdge(options: EdgeOptions): Edge {
                   : await keyedHash(hashKey, actingUserId),
             },
       registration: null,
+      ...(cli === null ? {} : { cli: cli.facts }),
       markers: {
         served:
           observed.served === null
@@ -600,6 +640,9 @@ export function createEdge(options: EdgeOptions): Edge {
         ...(principal === null
           ? []
           : [{ field: 'principal.id', reason: 'keyed_hash' }]),
+        ...(cli === null
+          ? []
+          : [{ field: 'session.id', reason: 'keyed_hash' }]),
         ...(dropped
           ? [{ field: 'http.path', reason: 'query_outside_allowlist' }]
           : []),

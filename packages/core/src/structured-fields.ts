@@ -1,9 +1,10 @@
 /**
- * The part of HTTP Structured Fields (RFC 8941) that HTTP Message Signatures
- * (RFC 9421) and Web Bot Auth put in headers: a Dictionary whose members are
- * Items or Inner Lists, each with Parameters; Strings, Tokens, Integers,
- * Decimals, Booleans and Byte Sequences as bare items. Read strictly, as the
- * RFC's algorithms read them: a header that does not parse is no signature.
+ * HTTP Structured Fields (RFC 9651, which RFC 8941 was): a Dictionary whose
+ * members are Items or Inner Lists, each with Parameters; Strings, Tokens,
+ * Integers, Decimals, Booleans, Byte Sequences, Dates and Display Strings as
+ * bare items. HTTP Message Signatures (RFC 9421) and Web Bot Auth put
+ * signatures in them, and a CLI its `x-agentrail-cli`. Read strictly, as the
+ * RFC's algorithms read them: a header that does not parse is none.
  */
 
 export type BareItem =
@@ -12,7 +13,11 @@ export type BareItem =
   | { readonly kind: 'integer'; readonly value: number }
   | { readonly kind: 'decimal'; readonly value: number }
   | { readonly kind: 'boolean'; readonly value: boolean }
-  | { readonly kind: 'bytes'; readonly value: Uint8Array<ArrayBuffer> };
+  | { readonly kind: 'bytes'; readonly value: Uint8Array<ArrayBuffer> }
+  /** Seconds since the epoch. */
+  | { readonly kind: 'date'; readonly value: number }
+  /** Unicode text, sent percent-encoded as UTF-8. */
+  | { readonly kind: 'display-string'; readonly value: string };
 
 export type Parameters = ReadonlyMap<string, BareItem>;
 
@@ -141,9 +146,51 @@ function readBytes(reader: Reader): Uint8Array<ArrayBuffer> {
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
+const utf8 = new TextDecoder('utf-8', { fatal: true });
+
+function readDisplayString(reader: Reader): string {
+  reader.expect('%');
+  reader.expect('"');
+  const bytes: number[] = [];
+  for (;;) {
+    if (reader.done())
+      throw new StructuredFieldError('An unclosed display string.');
+    const char = reader.next();
+    if (char === '"') break;
+    if (char === '%') {
+      const hex = reader.next() + reader.next();
+      if (!/^[0-9a-f]{2}$/u.test(hex))
+        throw new StructuredFieldError(
+          'A display string escapes a byte as % and two lowercase hex digits.',
+        );
+      bytes.push(Number.parseInt(hex, 16));
+    } else if (char < ' ' || char > '~')
+      throw new StructuredFieldError(
+        'A display string holds printable ASCII only.',
+      );
+    else bytes.push(char.charCodeAt(0));
+  }
+  try {
+    return utf8.decode(new Uint8Array(bytes));
+  } catch (error) {
+    if (error instanceof TypeError)
+      throw new StructuredFieldError('A display string is UTF-8.');
+    throw error;
+  }
+}
+
 function readBareItem(reader: Reader): BareItem {
   const char = reader.peek();
   if (char === '"') return { kind: 'string', value: readString(reader) };
+  if (char === '@') {
+    reader.next();
+    const seconds = readNumber(reader);
+    if (seconds.kind !== 'integer')
+      throw new StructuredFieldError('A date is an integer.');
+    return { kind: 'date', value: seconds.value };
+  }
+  if (char === '%')
+    return { kind: 'display-string', value: readDisplayString(reader) };
   if (char === ':') return { kind: 'bytes', value: readBytes(reader) };
   if (char === '?') {
     reader.next();
@@ -272,6 +319,14 @@ export function serializeBareItem(item: BareItem): string {
       return item.value ? '?1' : '?0';
     case 'bytes':
       return `:${btoa(String.fromCharCode(...item.value))}:`;
+    case 'date':
+      return `@${String(item.value)}`;
+    case 'display-string':
+      return `%"${Array.from(new TextEncoder().encode(item.value), (byte) =>
+        byte === 0x25 || byte === 0x22 || byte < 0x20 || byte > 0x7e
+          ? `%${byte.toString(16).padStart(2, '0')}`
+          : String.fromCharCode(byte),
+      ).join('')}"`;
   }
 }
 

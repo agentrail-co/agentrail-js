@@ -219,10 +219,29 @@ describe('the session', () => {
     const env = plainEnvironment(temporaryFolder());
     const long = await startRun(env);
     const session = await long.requestAt(0);
-    await long.requestAt(40);
+    for (let minutes = 5; minutes <= 40; minutes += 5)
+      await long.requestAt(minutes);
     long.end();
     const next = await startRun(env);
     expect(await next.requestAt(45)).toBe(session);
+  });
+
+  // Fails if someone lets a run that went idle write its session back: a run
+  // started after the idle timeout begins a new session, and the idle run's
+  // next request would put the old one back over it, splitting every run
+  // after from the new one.
+  it('is not written back over a newer one by a run that went idle', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const env = plainEnvironment(temporaryFolder());
+    const idle = await startRun(env);
+    const old = await idle.requestAt(0);
+    const newer = await startRun(env);
+    const started = await newer.requestAt(31);
+    expect(started).not.toBe(old);
+    // The idle run goes on with its own session, and writes nothing back.
+    expect(await idle.requestAt(32)).toBe(old);
+    const later = await startRun(env);
+    expect(await later.requestAt(33)).toBe(started);
   });
 
   // Fails if someone lets a run older than a day write its session back:

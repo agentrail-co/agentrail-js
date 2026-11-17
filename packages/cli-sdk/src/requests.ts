@@ -43,6 +43,8 @@ interface UndiciRequest {
 
 interface HttpRequest {
   readonly protocol: string;
+  /** The host the request connects to, as `ClientRequest.host` names it: never the Host header. */
+  readonly host: string;
   readonly headersSent: boolean;
   getHeader(name: string): unknown;
   hasHeader(name: string): boolean;
@@ -74,6 +76,8 @@ function isHttpRequest(request: unknown): request is HttpRequest {
     typeof request === 'object' &&
     request !== null &&
     'protocol' in request &&
+    'host' in request &&
+    typeof request.host === 'string' &&
     'setHeader' in request &&
     typeof request.setHeader === 'function' &&
     'getHeader' in request &&
@@ -132,6 +136,30 @@ function originOf(text: string): string | null {
 }
 
 /**
+ * The origin an `http` request connects to. Its host is the request's own
+ * (`ClientRequest.host`), never the Host header, which a caller may set to
+ * any host; its port is the one the Host header names, which Node writes
+ * from the request's own port unless the caller overrode it, and is taken
+ * only when that header names the same host. Node publishes no port of its
+ * own on the request, so one overridden to another port of the same host
+ * goes unseen. Null where the two disagree: the header goes on no such
+ * request, and comes off one the CLI put it on.
+ */
+function httpOriginOf(request: HttpRequest): string | null {
+  const named = request.getHeader('host');
+  if (typeof named !== 'string') return null;
+  const origin = originOf(`${request.protocol}//${named}`);
+  const ipv6 = request.host.includes(':') && !request.host.startsWith('[');
+  const connected = originOf(
+    `${request.protocol}//${ipv6 ? `[${request.host}]` : request.host}`,
+  );
+  if (origin === null || connected === null) return null;
+  return new URL(origin).hostname === new URL(connected).hostname
+    ? origin
+    : null;
+}
+
+/**
  * Starts watching the CLI's requests; the function returned stops. A
  * request to a listed origin gets the header; one to any other origin never
  * carries it, though the CLI put it on itself (with `headers(url)`) and a
@@ -145,6 +173,15 @@ export function watchRequests(
   policy: RequestPolicy,
   report: (error: Error) => void,
 ): () => void {
+  /** Tells `report`, which must not throw either: its error would end the CLI as the hook's would. */
+  const tell = (error: unknown): void => {
+    try {
+      report(error instanceof Error ? error : new Error(String(error)));
+    } catch {
+      // The CLI's own error handler failed: there is no one left to tell,
+      // and the request goes out as it was.
+    }
+  };
   const onUndici = (message: unknown): void => {
     try {
       const request = requestOf(message);
@@ -162,19 +199,14 @@ export function watchRequests(
       const value = policy.header(origin);
       if (value !== null) request.addHeader(CLI_HEADER, value);
     } catch (error) {
-      report(error instanceof Error ? error : new Error(String(error)));
+      tell(error);
     }
   };
   const onHttp = (message: unknown): void => {
     try {
       const request = requestOf(message);
       if (!isHttpRequest(request) || request.headersSent) return;
-      // The Host header names the port when it is not the scheme's own, as an origin does.
-      const host = request.getHeader('host');
-      const origin =
-        typeof host === 'string'
-          ? originOf(`${request.protocol}//${host}`)
-          : null;
+      const origin = httpOriginOf(request);
       if (request.hasHeader(CLI_HEADER)) {
         if (!anyLists(origin)) request.removeHeader(CLI_HEADER);
         return;
@@ -187,7 +219,7 @@ export function watchRequests(
       const value = policy.header(origin);
       if (value !== null) request.setHeader(CLI_HEADER, value);
     } catch (error) {
-      report(error instanceof Error ? error : new Error(String(error)));
+      tell(error);
     }
   };
   watching.add(policy);

@@ -32,10 +32,10 @@ Argus writes it (`apps/api/sdk-contract.json`, kept current by
 `apps/api/test/sdk-contract.test.ts`). It is copied here byte for byte and
 never edited here.
 
-Copied from Argus commit `2f8eb71d8`, branch `feat/cli-journeys`,
+Copied from Argus commit `a5092a616`, branch `feat/cli-journeys`,
 including the request facts an MCP span carries, the header names no
 caller writes, and the CLI header with the event's `cli` (sha256
-`432f62c7174d298bc3ad176a909322b7d7726d316e58af6d5f0cf88339f9af70`).
+`9d46a125cd143df327f02830db604a96a89874ee3b0eb763445262cfa662a25a`).
 
 To take a newer one: copy argus's `apps/api/sdk-contract.json` over this
 file, change the commit above, and run `pnpm test`. A test that fails then

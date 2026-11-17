@@ -208,32 +208,76 @@ export class LocalSession {
           return new LocalSession(kept, file, now, report);
         continue;
       }
+      // An expired or broken session is there: one run takes it away, and
+      // every run then makes the new one only where none is, so runs that
+      // start at one moment agree on one session.
+      if (stored !== 'absent') {
+        const taken = takeAway(file, now, report);
+        if (taken.kind === 'failed') continue;
+        if (taken.kind === 'fresh')
+          // Fresh after all: another run made it between our read and our take.
+          return new LocalSession(taken.id, file, now, report);
+      }
       const minted = newSessionId(now);
-      const result = write(
-        file,
-        minted,
-        now,
-        report,
-        stored === 'absent' ? 'create' : 'replace',
-      );
+      const result = write(file, minted, now, report, 'create');
       if (result === 'failed') continue;
-      // Runs started at one moment each found no session: all go on with
-      // the one the folder kept, so they are one session, not several.
-      const id = current(readSession(file, report), now) ?? minted;
+      const id =
+        result === 'written'
+          ? minted
+          : (current(readSession(file, report), now) ?? minted);
       return new LocalSession(id, file, now, report);
     }
     return null;
   }
 
-  /** Writes that the session was in use at `now`, at most once a minute, and not past its day. */
+  /**
+   * Writes that the session was in use at `now`, at most once a minute,
+   * while the file still holds it and it has not gone idle there: a run
+   * idle past the timeout goes on with its own session, and never writes it
+   * back over the one a later run started. Never past its day.
+   */
   touch(now: number): void {
     if (now - this.written < REFRESH_MS) return;
-    // A day on, the session is over: a run started now begins its own, and
-    // this one must not write the old one back over it.
     if (current({ id: this.id, seen: now }, now) === null) return;
+    if (current(readSession(this.file, this.report), now) !== this.id) return;
     if (write(this.file, this.id, now, this.report, 'replace') === 'written')
       this.written = now;
   }
+}
+
+/**
+ * Takes an expired session file away, so that one run alone replaces it:
+ * renaming one file succeeds for one run, and the rest find it `gone`. A
+ * session made fresh in the meantime is put back and named, to go on with.
+ */
+function takeAway(
+  file: string,
+  now: number,
+  report: (error: Error) => void,
+): { kind: 'fresh'; id: string } | { kind: 'gone' } | { kind: 'failed' } {
+  const old = `${file}.${process.pid}.old`;
+  try {
+    renameSync(file, old);
+  } catch (error) {
+    const code = codeOf(error);
+    if (code === 'ENOENT') return { kind: 'gone' };
+    if (code === undefined || !UNWRITABLE.has(code))
+      report(
+        new LocalSessionError(`Could not replace ${file}.`, { cause: error }),
+      );
+    return { kind: 'failed' };
+  }
+  const fresh = current(readSession(old, report), now);
+  if (fresh !== null) {
+    try {
+      linkSync(old, file);
+    } catch (error) {
+      // Another run made one since: it stays, and this run adopts it.
+      if (codeOf(error) !== 'EEXIST') throw error;
+    }
+  }
+  rmSync(old, { force: true });
+  return fresh === null ? { kind: 'gone' } : { kind: 'fresh', id: fresh };
 }
 
 /** A file system with no hard links (FAT, some network shares): a session is renamed in instead. */

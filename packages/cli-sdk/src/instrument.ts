@@ -164,11 +164,24 @@ export function instrumentCli(options: CliSdkOptions): CliSdk {
       ? name
       : text(options.sessionScope, 'sessionScope');
   const origins = exactOrigins(options.origins);
-  const onError =
+  const tell =
     options.onError ??
     ((error: Error) => {
       console.error('agentrail-cli-sdk:', error);
     });
+  /**
+   * Tells the CLI's `onError`, and never lets it break the CLI: a handler
+   * that throws inside a request hook would end the process, as Node throws
+   * a subscriber's error again outside the request.
+   */
+  const onError = (error: Error): void => {
+    try {
+      tell(error);
+    } catch {
+      // The CLI's own handler failed: there is no one left to tell, and the
+      // command goes on.
+    }
+  };
   const debug = isOn(env.AGENTRAIL_CLI_DEBUG)
     ? (line: string) => process.stderr.write(`agentrail-cli-sdk: ${line}\n`)
     : undefined;

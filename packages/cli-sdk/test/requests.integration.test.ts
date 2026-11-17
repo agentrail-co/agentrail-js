@@ -13,9 +13,12 @@ import {
 } from './support/api.js';
 
 /** A request through `http.get`, as axios, got and node-fetch make theirs. */
-function httpGet(url: string): Promise<void> {
+function httpGet(
+  url: string,
+  headers: Record<string, string> = {},
+): Promise<void> {
   return new Promise((resolve, reject) => {
-    get(url, (response) => {
+    get(url, { headers }, (response) => {
       response.resume();
       response.on('end', resolve);
     }).on('error', reject);
@@ -98,6 +101,65 @@ describe('the CLI’s requests', () => {
       expect(storage.requests[0]?.headers['x-agentrail-cli']).toBeUndefined();
     },
   );
+
+  // Fails if someone takes an http request's origin from its Host header:
+  // a request made to any server with a Host header naming the CLI's API
+  // would carry the run, the session and the command there.
+  it('never carry it to a server a Host header names as the API', async () => {
+    const api = await startApi();
+    const other = await startApi();
+    // The API by name, the other server by address: the Host header can name
+    // the API while the request goes to the other one.
+    const listed = api.origin.replace('127.0.0.1', 'localhost');
+    const sdk = instrument({
+      name: 'acme',
+      origins: [listed],
+      env: plainEnvironment(temporaryFolder()),
+    });
+    const host = new URL(listed).host;
+    await httpGet(`${other.origin}/forged`, { host });
+    await httpGet(`${other.origin}/forged`, {
+      host,
+      ...sdk.headers(`${listed}/v1`),
+    });
+    expect(other.requests.map(({ path }) => path)).toEqual([
+      '/forged',
+      '/forged',
+    ]);
+    expect(other.headers()).toEqual([null, null]);
+  });
+
+  // Fails if someone lets a throwing onError out of a request hook: Node
+  // throws a subscriber's error again outside the request, and the CLI's
+  // command would end because its own error handler has a bug.
+  it('go out when the CLI’s onError throws as well', async () => {
+    const api = await startApi();
+    const stop = watchRequests(
+      {
+        lists: () => true,
+        header: () => {
+          throw new Error('broken');
+        },
+      },
+      () => {
+        throw new Error('the CLI’s handler is broken too');
+      },
+    );
+    const uncaught: unknown[] = [];
+    const record = (error: unknown) => uncaught.push(error);
+    process.on('uncaughtException', record);
+    try {
+      expect((await fetch(`${api.origin}/v1`)).status).toBe(200);
+      await httpGet(`${api.origin}/v2`);
+      // A subscriber's error is thrown again on the next tick.
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      stop();
+      process.off('uncaughtException', record);
+    }
+    expect(api.requests).toHaveLength(2);
+    expect(uncaught).toEqual([]);
+  });
 
   // Fails if someone takes the header off by one SDK's own origins: with
   // two in one CLI (its own and a plugin's), each would strip the other's.

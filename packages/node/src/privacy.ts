@@ -110,8 +110,12 @@ export function copySpan(
   if (span.kind === SpanKind.SERVER) {
     attrs['agentrail.ingress.verified'] = metadata.state.verifiedIngress;
     // Only the request's own entry span: a CLI's header says nothing of the
-    // calls this server makes while answering it.
-    if (metadata.state.cli !== undefined)
+    // calls this server makes while answering it, nor of a server span a
+    // library opens inside it.
+    if (
+      metadata.state.cli !== undefined &&
+      (metadata.state.entry.span as object | undefined) === span
+    )
       Object.assign(attrs, metadata.state.cli);
   }
   if (mark !== undefined)

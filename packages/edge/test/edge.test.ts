@@ -880,6 +880,10 @@ describe('the platform adapters', () => {
       'x-forwarded-for': ADDRESS,
       'x-forwarded-proto': 'https',
       'x-real-ip': ADDRESS,
+      // What Vercel adds on the way to a function: every request
+      // www.agentrail.co's edge recorded on Vercel carried both.
+      'logs-url': 'https://vercel.com/synthetic/logs',
+      'x-invocation-id': 'synthetic-invocation',
     };
     const contract = new RegExp(
       OTLP.headerNames.addedOnTheWay.pattern,

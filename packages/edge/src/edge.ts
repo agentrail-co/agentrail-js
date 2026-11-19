@@ -75,12 +75,16 @@ const ACCEPT_ENCODING_LENGTH = 128;
 /**
  * The header names no caller writes: what a proxy or the platform added on
  * the way (Cloudflare's `cf-*`, Vercel's `x-vercel-*`, and the `logs-url` and
- * `x-invocation-id` Vercel adds on the way to a function, `x-forwarded-*`),
- * and Agentrail's own first-party mark. The contract's
+ * `x-invocation-id` Vercel adds on the way to a function, `x-forwarded-*`;
+ * the `render-proxy-ttl`, `rndr-id` and `x-request-start` Render's proxy adds
+ * on the way to a service, which all 37 MCP steps recorded behind this edge
+ * on Render carried, 2026-11-19), the `x-agentrail-trace-handoff` an
+ * Agentrail edge adds to the request it forwards (`requestForOrigin`), and
+ * Agentrail's own first-party mark. The contract's
  * (`otlp.headerNames.addedOnTheWay`); the tests hold this copy to it.
  */
 export const ADDED_ON_THE_WAY =
-  /^(?:x-forwarded-.*|x-amzn-.*|x-vercel-.*|cf-.*|forwarded|via|x-real-ip|cdn-loop|true-client-ip|logs-url|x-invocation-id|agentrail-first-party)$/iu;
+  /^(?:x-forwarded-.*|x-amzn-.*|x-vercel-.*|cf-.*|forwarded|via|x-real-ip|cdn-loop|true-client-ip|logs-url|x-invocation-id|render-proxy-ttl|rndr-id|x-request-start|x-agentrail-trace-handoff|agentrail-first-party)$/iu;
 /** The most header names an event keeps, and the most characters they take joined (`otlp.headerNames`). */
 export const HEADER_NAMES_KEPT = { count: 40, characters: 512 } as const;
 /** The longest `Sec-Fetch-*` value the collector takes; the browsers' are one word. */

@@ -32,10 +32,11 @@ Argus writes it (`apps/api/sdk-contract.json`, kept current by
 `apps/api/test/sdk-contract.test.ts`). It is copied here byte for byte and
 never edited here.
 
-Copied from Argus commit `92f514c7f`, branch `feat/cli-journeys`,
-including the request facts an MCP span carries, the header names no
-caller writes, and the CLI header with the event's `cli` (sha256
-`0d4cd14df4eb7cdcbc433ca62ea7b9b6364b696e73f02a8e31384a8062668454`).
+Copied from Argus commit `b9f706771`, branch `fix/linkage-wire-behind-edge`
+(argus#762), including the request facts an MCP span carries, the header
+names no caller writes (now with the names Render's proxy and an Agentrail
+edge add on the way), and the CLI header with the event's `cli` (sha256
+`49fa11fd358a233f138adb73273fccf86997eda3bd037c8b877671c62d1f4cc4`).
 
 To take a newer one: copy argus's `apps/api/sdk-contract.json` over this
 file, change the commit above, and run `pnpm test`. A test that fails then

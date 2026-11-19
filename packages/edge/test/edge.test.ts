@@ -989,6 +989,35 @@ describe('the platform adapters', () => {
     expect(events[3]?.actor.transport).toBeNull();
   });
 
+  // Fails if someone drops from the edge's copy a name Render's proxy adds on
+  // the way to a service, or the handoff an Agentrail edge in front adds to
+  // what it forwards: the edge would record them as the caller's own. Every
+  // MCP step recorded behind agentrail-edge on Render (37 of 37, 2026-11-19)
+  // carried all four.
+  it("leaves out what Render's proxy and an Agentrail edge in front add on the way", async () => {
+    const { send, events } = edgeBefore(() => new Response('ok'));
+    const caller = {
+      host: DOCS,
+      'user-agent': 'synthetic-agent/1.0',
+      accept: 'text/markdown, */*',
+    };
+    const added = {
+      'render-proxy-ttl': '4',
+      'rndr-id': 'synthetic-render-request',
+      'x-request-start': '1763510400000',
+      'x-agentrail-trace-handoff': 'v1.synthetic-handoff',
+    };
+    await send(
+      new Request(`https://${DOCS}/guide.md`, {
+        headers: { ...caller, ...added },
+      }),
+    );
+    expect(events[0]?.actor.transport).toEqual({
+      headerNames: Object.keys(caller).sort().join(','),
+      acceptEncoding: null,
+    });
+  });
+
   // Fails if a newer contract names another header no caller writes, or
   // keeps fewer names, and the edge's copy is not brought level with it.
   it('leaves out the names the contract says no caller writes, within its limits', () => {

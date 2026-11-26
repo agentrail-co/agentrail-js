@@ -1,7 +1,16 @@
 import { isCaptureSuppressed } from './suppression.js';
 import type { SpanProcessor } from '@opentelemetry/sdk-trace';
-import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
-import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-proto';
+import { OTLPExporterBase } from '@opentelemetry/otlp-exporter-base';
+import {
+  createOtlpHttpExportDelegate,
+  httpAgentFactoryFromOptions,
+} from '@opentelemetry/otlp-exporter-base/node-http';
+import {
+  LogsExporterMetricsHelper,
+  ProtobufLogsSerializer,
+  ProtobufTraceSerializer,
+  TraceExporterMetricsHelper,
+} from '@opentelemetry/otlp-transformer';
 import { ExportQueue } from './queue.js';
 import {
   copySpan,
@@ -13,19 +22,52 @@ import type { Runtime } from './runtime.js';
 
 export function processors(runtime: Runtime) {
   const options = runtime.options;
-  const config = {
-    headers: { Authorization: `Bearer ${options.input.collector.secret}` },
+  /**
+   * OTLP/HTTP protobuf to the collector, configured in full: the exporters'
+   * own constructors merge the application's OTEL_EXPORTER_OTLP_* settings
+   * in (its headers, a vendor's key among them, compression, certificates),
+   * and none of them is Agentrail's to send. The same transport, with its
+   * retries, as those exporters use.
+   */
+  const configuration = (path: string) => ({
+    url: new URL(`${options.endpoint}/${path}`).href,
+    headers: () =>
+      Promise.resolve({
+        Authorization: `Bearer ${options.input.collector.secret}`,
+        'Content-Type': 'application/x-protobuf',
+      }),
+    compression: 'none' as const,
     timeoutMillis: options.queue.exportTimeoutMs,
-  };
+    concurrencyLimit: 30,
+    agentFactory: httpAgentFactoryFromOptions({ keepAlive: true }),
+  });
   const spans = new ExportQueue(
     'traces',
-    new OTLPTraceExporter({ ...config, url: `${options.endpoint}/v1/traces` }),
+    new OTLPExporterBase(
+      createOtlpHttpExportDelegate(
+        configuration('v1/traces'),
+        ProtobufTraceSerializer,
+        'otlp_http_span_exporter',
+        TraceExporterMetricsHelper,
+        // Its own metrics go nowhere, never to the application's meters.
+        undefined,
+      ),
+    ),
     options,
     { bytes: estimatedBytes, payloadBytes, withoutPayloads },
   );
   const logs = new ExportQueue(
     'logs',
-    new OTLPLogExporter({ ...config, url: `${options.endpoint}/v1/logs` }),
+    new OTLPExporterBase(
+      createOtlpHttpExportDelegate(
+        configuration('v1/logs'),
+        ProtobufLogsSerializer,
+        'otlp_http_log_exporter',
+        LogsExporterMetricsHelper,
+        // Its own metrics go nowhere, never to the application's meters.
+        undefined,
+      ),
+    ),
     options,
   );
   /** On the SDK's own tracer provider only: no other span ever reaches it. */

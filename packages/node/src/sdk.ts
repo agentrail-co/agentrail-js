@@ -15,6 +15,16 @@ export function createSdk(options: NodeOptions) {
   const provider = new TracerProvider({
     sampler: new AlwaysOnSampler(),
     spanProcessors: [queues.spanProcessor],
+    // Stated, never left to an environment: an MCP payload attribute holds
+    // up to 14 MiB, and every value is sent whole.
+    spanLimits: {
+      attributeCountLimit: 128,
+      attributeValueLengthLimit: Infinity,
+      eventCountLimit: 128,
+      linkCountLimit: 128,
+      attributePerEventCountLimit: 128,
+      attributePerLinkCountLimit: 128,
+    },
   });
   const tracer = provider.getTracer('agentrail-node');
   return { runtime, tracer, client: createClient(runtime, queues, tracer) };

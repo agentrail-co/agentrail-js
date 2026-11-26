@@ -59,6 +59,7 @@ export async function collector(responses: readonly number[] = []) {
     path: string;
     bytes: Buffer;
     authorization: string | undefined;
+    headers: import('node:http').IncomingHttpHeaders;
   }[] = [];
   let attempts = 0;
   const server = createServer((request, response) => {
@@ -72,6 +73,7 @@ export async function collector(responses: readonly number[] = []) {
         path: request.url,
         bytes: Buffer.concat(chunks),
         authorization: request.headers.authorization,
+        headers: request.headers,
       });
       const status = responses[attempts++] ?? 200;
       if (status === 0) return; // Deliberately held response: export deadline fixture.

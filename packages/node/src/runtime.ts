@@ -18,8 +18,8 @@ export interface State {
   readonly entry: { span?: Span };
   /**
    * The names of the incoming request's headers in the order and the case
-   * they arrived (Node's `rawHeaders`), never a value; undefined where the
-   * HTTP instrumentation did not see the request.
+   * they arrived (Node's `rawHeaders`), never a value; undefined where
+   * `init`'s HTTP capture did not see the request.
    */
   headerNames?: readonly string[];
   /** What a CLI's `x-agentrail-cli` header said of the request, as span attributes (`cli.ts`). */
@@ -135,8 +135,6 @@ export function registerInternal(client: object, internal: Internal): void {
 export function internalOf(client: object): Internal {
   const internal = internals.get(client);
   if (internal === undefined)
-    throw new ConfigurationError(
-      'Pass the client that init or createProcessors returned.',
-    );
+    throw new ConfigurationError('Pass the client that init returned.');
   return internal;
 }

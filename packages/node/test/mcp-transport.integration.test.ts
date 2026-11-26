@@ -13,15 +13,13 @@ import {
   CLIENT_INFO_META_KEY,
   PROTOCOL_VERSION_META_KEY,
 } from '@modelcontextprotocol/server';
-import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
-import { context, trace } from '@opentelemetry/api';
-import { TracerProvider } from '@opentelemetry/sdk-trace';
 import { OTLP, type McpCallFacts } from 'agentrail-contract';
 import { describe, expect, it, vi } from 'vitest';
-import { createProcessors, type CaptureError } from '../src/index.js';
+import type { CaptureError } from '../src/index.js';
 import { mcp, type McpPayloadCapture } from '../src/mcp.js';
 import { collector, attributesOf, type WireSpan } from './support/collector.js';
 import { HASH_KEY, options } from './support/options.js';
+import { createTestSdk } from './support/sdk.js';
 
 const A = OTLP.mcpAttributes;
 const url = new URL('http://synthetic.test/mcp');
@@ -110,23 +108,13 @@ async function harness(
   const sink = await collector();
   const failures: CaptureError[] = [];
   const base = options(sink.endpoint);
-  const sdk = createProcessors({
+  const sdk = createTestSdk({
     ...base,
     queue: { ...base.queue, ...queue },
     onError: (error) => {
       failures.push(error);
     },
   });
-  const provider = new TracerProvider({
-    sampler: sdk.sampler({
-      shouldSample: () => ({ decision: 2 }),
-      toString: () => 'always',
-    }),
-    spanProcessors: [sdk.spanProcessor],
-  });
-  const manager = new AsyncLocalStorageContextManager().enable();
-  expect(context.setGlobalContextManager(manager)).toBe(true);
-  expect(trace.setGlobalTracerProvider(provider)).toBe(true);
   const capture = mcp({
     client: sdk.client,
     ...(capturePayloads === undefined ? {} : { capturePayloads }),
@@ -147,10 +135,6 @@ async function harness(
       ),
     async close() {
       await sdk.client.shutdown();
-      await provider.shutdown();
-      manager.disable();
-      context.disable();
-      trace.disable();
       await sink.close();
     },
   };

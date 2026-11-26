@@ -1,13 +1,9 @@
 import { isCaptureSuppressed } from './suppression.js';
-import { context } from '@opentelemetry/api';
-import { SamplingDecision } from '@opentelemetry/sdk-trace';
-import type { Sampler, SpanProcessor } from '@opentelemetry/sdk-trace';
-import type { LogRecordProcessor } from '@opentelemetry/sdk-logs';
+import type { SpanProcessor } from '@opentelemetry/sdk-trace';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
 import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-proto';
 import { ExportQueue } from './queue.js';
 import {
-  copyLog,
   copySpan,
   estimatedBytes,
   payloadBytes,
@@ -32,6 +28,7 @@ export function processors(runtime: Runtime) {
     new OTLPLogExporter({ ...config, url: `${options.endpoint}/v1/logs` }),
     options,
   );
+  /** On the SDK's own tracer provider only: no other span ever reaches it. */
   const spanProcessor: SpanProcessor = {
     onStart(span, parent) {
       if (isCaptureSuppressed(parent)) return;
@@ -51,37 +48,5 @@ export function processors(runtime: Runtime) {
     forceFlush: () => spans.flush(),
     shutdown: () => spans.shutdown(),
   };
-  const logProcessor: LogRecordProcessor = {
-    onEmit(record, ctx = context.active()) {
-      if (isCaptureSuppressed(ctx)) return;
-      // An unrelated request's log must never inherit a managed request's context.
-      if (
-        runtime.state(ctx) === undefined &&
-        options.input.logs?.uncorrelated === false
-      )
-        return;
-      const copy = copyLog(record, runtime);
-      if (copy !== undefined) logs.add(copy);
-    },
-    forceFlush: () => logs.flush(),
-    shutdown: () => logs.shutdown(),
-  };
-  const sampler = (base: Sampler): Sampler => ({
-    shouldSample(ctx, traceId, name, kind, attributes, links) {
-      const result = base.shouldSample(
-        ctx,
-        traceId,
-        name,
-        kind,
-        attributes,
-        links,
-      );
-      return result.decision === SamplingDecision.NOT_RECORD &&
-        runtime.state(ctx) !== undefined
-        ? { ...result, decision: SamplingDecision.RECORD }
-        : result;
-    },
-    toString: () => `Agentrail(${base.toString()})`,
-  });
-  return { spanProcessor, logProcessor, sampler, spans, logs };
+  return { spanProcessor, spans, logs };
 }

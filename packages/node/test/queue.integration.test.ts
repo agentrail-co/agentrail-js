@@ -1,21 +1,14 @@
 import { Writable } from 'node:stream';
 import pinoLogger from 'pino';
-import { LoggerProvider } from '@opentelemetry/sdk-logs';
 import { pino } from '../src/pino.js';
 import { performance } from 'node:perf_hooks';
-import { trace } from '@opentelemetry/api';
-import { TracerProvider } from '@opentelemetry/sdk-trace';
 import { describe, expect, it, vi } from 'vitest';
-import {
-  createProcessors,
-  init,
-  CaptureError,
-  ConfigurationError,
-} from '../src/index.js';
+import type { CaptureError } from '../src/index.js';
 import { collector, attributesOf } from './support/collector.js';
 import { options } from './support/options.js';
+import { createTestSdk } from './support/sdk.js';
 
-describe('delivery, privacy and provider ownership', () => {
+describe('delivery and privacy', () => {
   // Fails if a customer's reporting exception escapes a logging call or prevents later delivery.
   it.each(['client', 'pino'] as const)(
     'isolates throwing onError callbacks from %s logging and queue cleanup',
@@ -29,7 +22,7 @@ describe('delivery, privacy and provider ownership', () => {
         .spyOn(console, 'error')
         .mockImplementation(() => undefined);
       let throwReports = true;
-      const sdk = createProcessors({
+      const sdk = createTestSdk({
         ...options(sink.endpoint),
         queue: { maxRecords: 1, batchSize: 1 },
         onError: (error) => {
@@ -100,7 +93,7 @@ describe('delivery, privacy and provider ownership', () => {
       .spyOn(console, 'error')
       .mockImplementation(() => undefined);
     let throwReports = true;
-    const sdk = createProcessors({
+    const sdk = createTestSdk({
       ...options(sink.endpoint),
       queue: {
         maxRecords: 1,
@@ -141,7 +134,7 @@ describe('delivery, privacy and provider ownership', () => {
   // Fails if an already-finished empty drain suppresses the next record's export and timer.
   it('delivers a record added in the same turn as an empty flush without a second flush', async () => {
     const sink = await collector();
-    const sdk = createProcessors({
+    const sdk = createTestSdk({
       ...options(sink.endpoint),
       queue: { batchSize: 1 },
     });
@@ -209,7 +202,7 @@ describe('delivery, privacy and provider ownership', () => {
     'exports bounded parseable selected fields for $name',
     async ({ fields, selected, keys }) => {
       const sink = await collector();
-      const sdk = createProcessors({
+      const sdk = createTestSdk({
         ...options(sink.endpoint),
         logs: { includeFields: selected },
       });
@@ -241,79 +234,69 @@ describe('delivery, privacy and provider ownership', () => {
   );
 
   // Fails if SDK diagnostics feed back through a supported logger into their own full queue.
-  it.each(['pino', 'otel'] as const)(
-    'does not recapture its own %s failure reports during overflow/outage',
-    async (bridge) => {
-      const sink = await collector([0]);
-      const errors: CaptureError[] = [];
-      let reporting = true;
-      const diagnostic = (error: Error) => {
-        if (bridge === 'pino') logger.error(error);
-        else
-          logs
-            .getLogger('diagnostics')
-            .emit({ severityNumber: 17, body: error.message });
-      };
-      const sdk = createProcessors({
-        ...options(sink.endpoint),
-        queue: {
-          maxRecords: 1,
-          batchSize: 1,
-          exportTimeoutMs: 100,
-          flushTimeoutMs: 200,
-          shutdownTimeoutMs: 200,
+  it('does not recapture its own pino failure reports during overflow/outage', async () => {
+    const sink = await collector([0]);
+    const errors: CaptureError[] = [];
+    let reporting = true;
+    const diagnostic = (error: Error) => {
+      logger.error(error);
+    };
+    const sdk = createTestSdk({
+      ...options(sink.endpoint),
+      queue: {
+        maxRecords: 1,
+        batchSize: 1,
+        exportTimeoutMs: 100,
+        flushTimeoutMs: 200,
+        shutdownTimeoutMs: 200,
+      },
+      onError: (error) => {
+        errors.push(error);
+        if (reporting) diagnostic(error);
+      },
+    });
+    const output: string[] = [];
+    const logger = pinoLogger(
+      { hooks: pino(sdk.client) },
+      new Writable({
+        write(chunk, _encoding, done) {
+          output.push(String(chunk));
+          done();
         },
-        onError: (error) => {
-          errors.push(error);
-          if (reporting) diagnostic(error);
-        },
+      }),
+    );
+    const emit = () => {
+      logger.info('ordinary application log');
+    };
+    try {
+      expect(() => {
+        emit();
+        emit();
+      }).not.toThrow();
+      await sdk.client.flush();
+      expect(errors.map((error) => error.code)).toEqual([
+        'queue_full',
+        'export_failed',
+      ]);
+      expect(sdk.client.diagnostics().logs).toEqual({
+        accepted: 1,
+        exported: 0,
+        dropped: 2,
+        pending: 0,
       });
-      const output: string[] = [];
-      const logger = pinoLogger(
-        { hooks: pino(sdk.client) },
-        new Writable({
-          write(chunk, _encoding, done) {
-            output.push(String(chunk));
-            done();
-          },
-        }),
-      );
-      const logs = new LoggerProvider({ processors: [sdk.logProcessor] });
-      const emit = () => {
-        if (bridge === 'pino') logger.info('ordinary application log');
-        else logs.getLogger('application').emit({ severityNumber: 9 });
-      };
-      try {
-        expect(() => {
-          emit();
-          emit();
-        }).not.toThrow();
-        await sdk.client.flush();
-        expect(errors.map((error) => error.code)).toEqual([
-          'queue_full',
-          'export_failed',
-        ]);
-        expect(sdk.client.diagnostics().logs).toEqual({
-          accepted: 1,
-          exported: 0,
-          dropped: 2,
-          pending: 0,
-        });
-        if (bridge === 'pino') expect(output).toHaveLength(4);
-      } finally {
-        reporting = false;
-        await sdk.client.shutdown();
-        await logs.shutdown();
-        await sink.close();
-      }
-    },
-  );
+      expect(output).toHaveLength(4);
+    } finally {
+      reporting = false;
+      await sdk.client.shutdown();
+      await sink.close();
+    }
+  });
 
   // Fails if retryable OTLP failures become permanent, or a retry creates a second logical log ID.
   it('retries transient refusal with the same sanitized record', async () => {
     const sink = await collector([503, 200]);
     const errors: CaptureError[] = [];
-    const sdk = createProcessors({
+    const sdk = createTestSdk({
       ...options(sink.endpoint),
       logs: { includeFields: ['msg'] },
       queue: {
@@ -366,7 +349,7 @@ describe('delivery, privacy and provider ownership', () => {
   it('bounds the queue and reports overflow and permanent refusal', async () => {
     const sink = await collector([401, 200]);
     const errors: CaptureError[] = [];
-    const sdk = createProcessors({
+    const sdk = createTestSdk({
       ...options(sink.endpoint),
       queue: { maxRecords: 2, batchSize: 1 },
       onError: (error) => {
@@ -401,7 +384,7 @@ describe('delivery, privacy and provider ownership', () => {
   it('returns within the shutdown deadline during an outage', async () => {
     const sink = await collector([0, 0]);
     const errors: CaptureError[] = [];
-    const sdk = createProcessors({
+    const sdk = createTestSdk({
       ...options(sink.endpoint),
       queue: {
         maxRecords: 3,
@@ -425,21 +408,6 @@ describe('delivery, privacy and provider ownership', () => {
       expect(errors.reduce((sum, error) => sum + error.count, 0)).toBe(3);
     } finally {
       await sdk.client.shutdown();
-      await sink.close();
-    }
-  });
-  // Fails if init silently overwrites an existing provider instead of requiring construction-time processor wiring.
-  it('refuses an already-installed provider without replacing it', async () => {
-    const provider = new TracerProvider();
-    expect(trace.setGlobalTracerProvider(provider)).toBe(true);
-    const sink = await collector();
-    try {
-      const before = trace.getTracerProvider();
-      expect(() => init(options(sink.endpoint))).toThrow(ConfigurationError);
-      expect(trace.getTracerProvider()).toBe(before);
-    } finally {
-      trace.disable();
-      await provider.shutdown();
       await sink.close();
     }
   });

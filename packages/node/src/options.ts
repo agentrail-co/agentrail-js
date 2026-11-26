@@ -61,8 +61,6 @@ export interface QueueOptions {
   readonly shutdownTimeoutMs: number;
 }
 export interface NodeOptions {
-  /** Retain customer propagation for unmanaged work; register the returned SDK propagator once. */
-  readonly propagator?: import('@opentelemetry/api').TextMapPropagator;
   readonly collector: { readonly endpoint: string; readonly secret: string };
   readonly hashKey: string;
   readonly serviceName: string;
@@ -96,7 +94,12 @@ export type CaptureCode =
   /** MCP payloads past the queue's payload memory budget: the span went without them. */
   | 'payload_budget'
   /** The application's MCP payload redact hook threw: the span went without payloads. */
-  | 'payload_redact_failed';
+  | 'payload_redact_failed'
+  /**
+   * Capturing one HTTP request or call failed (`ignoreIncomingRequest`
+   * threw, say): it went on, without Agentrail's record of it.
+   */
+  | 'capture_failed';
 export class CaptureError extends Error {
   override readonly name = 'AgentrailCaptureError';
   constructor(

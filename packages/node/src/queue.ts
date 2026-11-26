@@ -1,8 +1,9 @@
 import { ExportResultCode, suppressTracing } from '@opentelemetry/core';
-import { context } from '@opentelemetry/api';
+import { context, ROOT_CONTEXT } from '@opentelemetry/api';
 import type { ExportResult } from '@opentelemetry/core';
 import { CaptureError, type ResolvedOptions } from './options.js';
 import { EXPORT_BATCH_BYTES, QUEUE_PAYLOAD_BYTES } from './limits.js';
+import { ours } from './context.js';
 
 interface Exporter<T> {
   export(records: T[], callback: (result: ExportResult) => void): void;
@@ -128,8 +129,12 @@ export class ExportQueue<T> {
           error: new Error('OTLP flush or shutdown deadline exceeded.'),
         });
       };
-      context.with(suppressTracing(context.active()), () => {
-        this.exporter.export(batch, done);
+      // Outside every request of this SDK's, and suppressed in the
+      // application's own context, so its instrumentation skips the export.
+      ours.with(ROOT_CONTEXT, () => {
+        context.with(suppressTracing(context.active()), () => {
+          this.exporter.export(batch, done);
+        });
       });
     });
   }

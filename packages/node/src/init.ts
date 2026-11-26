@@ -1,18 +1,17 @@
-import { createRequire, syncBuiltinESMExports } from 'node:module';
-import { context, propagation, trace } from '@opentelemetry/api';
-import { logs } from '@opentelemetry/api-logs';
-import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
-import { AlwaysOnSampler, TracerProvider } from '@opentelemetry/sdk-trace';
-import { LoggerProvider } from '@opentelemetry/sdk-logs';
-import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
-import { UndiciInstrumentation } from '@opentelemetry/instrumentation-undici';
-import { createProcessors } from './index.js';
+import { createRequire } from 'node:module';
 import { ConfigurationError, type NodeOptions } from './options.js';
 import type { AgentrailNode } from './client.js';
+import { installHttpCapture } from './http.js';
 import { internalOf, registerInternal } from './runtime.js';
+import { createSdk } from './sdk.js';
 
 let installed: { options: NodeOptions; client: AgentrailNode } | undefined;
-/** Call before loading application HTTP modules. Use createProcessors when another OTel provider owns startup. */
+/**
+ * Call before loading application HTTP modules. Once per process: a second
+ * installation would record every request twice. Sentry, Datadog or an
+ * OpenTelemetry setup can start before or after it; it registers no
+ * OpenTelemetry global and leaves theirs alone.
+ */
 export function init(options: NodeOptions): Promise<AgentrailNode> {
   if (installed !== undefined) {
     if (installed.options !== options)
@@ -21,66 +20,20 @@ export function init(options: NodeOptions): Promise<AgentrailNode> {
       );
     return Promise.resolve(installed.client);
   }
-  const sdk = createProcessors(options);
-  const provider = new TracerProvider({
-    sampler: sdk.sampler(new AlwaysOnSampler()),
-    spanProcessors: [sdk.spanProcessor],
-  });
-  if (!trace.setGlobalTracerProvider(provider)) {
-    void sdk.client.shutdown();
-    throw new ConfigurationError(
-      'A tracer provider is already installed. Wire createProcessors into its construction instead.',
-    );
-  }
-  const manager = new AsyncLocalStorageContextManager().enable();
-  if (!context.setGlobalContextManager(manager)) {
-    trace.disable();
-    manager.disable();
-    void provider.shutdown();
-    throw new ConfigurationError(
-      'An OTel context manager is already installed. Use createProcessors with the existing setup.',
-    );
-  }
-  if (!propagation.setGlobalPropagator(sdk.propagator)) {
-    trace.disable();
-    context.disable();
-    manager.disable();
-    void provider.shutdown();
-    throw new ConfigurationError(
-      'An OTel propagator is already installed. Use createProcessors with the existing setup.',
-    );
-  }
-  const logger = new LoggerProvider({ processors: [sdk.logProcessor] });
-  const ownLogs = logs.setGlobalLoggerProvider(logger) === logger;
-  if (!ownLogs) {
-    trace.disable();
-    context.disable();
-    propagation.disable();
-    manager.disable();
-    void provider.shutdown();
-    void logger.shutdown();
-    throw new ConfigurationError(
-      'A logger provider is already installed. Use createProcessors with the existing setup.',
-    );
-  }
-  const http = new HttpInstrumentation(sdk.httpOptions);
-  const undici = new UndiciInstrumentation(sdk.undiciOptions);
-  http.setTracerProvider(provider);
-  undici.setTracerProvider(provider);
-  // Load core modules through the supported instrumentation loader, then refresh Node's ESM bindings.
+  const sdk = createSdk(options);
+  // Let an instrumentation that patches on require (Datadog's, say) patch
+  // node:http first, so this SDK's wrappers sit outside it.
   const require = createRequire(import.meta.url);
   require('node:http');
   require('node:https');
-  syncBuiltinESMExports();
+  const uninstall = installHttpCapture(sdk.runtime, sdk.tracer);
   let stopping: Promise<void> | undefined;
   const client: AgentrailNode = {
     ...sdk.client,
     shutdown() {
       stopping ??= (async () => {
-        http.disable();
-        undici.disable();
-        await Promise.all([provider.shutdown(), logger.shutdown()]);
-        manager.disable();
+        uninstall();
+        await sdk.client.shutdown();
       })();
       return stopping;
     },

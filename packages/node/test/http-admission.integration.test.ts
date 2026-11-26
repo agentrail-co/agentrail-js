@@ -2,11 +2,17 @@ import { once } from 'node:events';
 import http, { createServer, type ClientRequest } from 'node:http';
 import https from 'node:https';
 import { connect } from 'node:net';
+import { TRACE_HANDOFF_HEADER } from 'agentrail-core';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { init, type AgentrailNode } from '../src/index.js';
 import { CLI_VALUE, OK, arrive, downstream, listen } from './support/beside.js';
 import { collector } from './support/collector.js';
 import { options } from './support/options.js';
+
+// Bound before init, as an ESM loader (import-in-the-middle, which
+// OpenTelemetry's and Datadog's ESM setups register) leaves a named import
+// of node:http: the SDK's wrappers never see these.
+const unwrapped = { request: http.request, get: http.get };
 
 /** Waits for a call's response to be read to its end. */
 async function answered(request: ClientRequest): Promise<void> {
@@ -29,6 +35,7 @@ beforeAll(async () => {
     outboundOrigins: [
       allowed.origin,
       `https://127.0.0.1:${String(allowed.port)}`,
+      'https://127.0.0.1',
     ],
     ignoreIncomingRequest: (request) =>
       [allowed.port, elsewhere.port].includes(request.socket.localPort ?? 0),
@@ -40,6 +47,28 @@ afterAll(async () => {
   await elsewhere.close();
   await sink.close();
 });
+/**
+ * As agent-base (under https-proxy-agent and the like) is: its default port
+ * and protocol are getters that read the call stack, and say https only
+ * inside Node's own https code. It tunnels to the allowed server.
+ */
+function proxyAgent(port: number): http.Agent {
+  const insideHttps = () => new Error().stack?.includes('node:https') === true;
+  class ProxyAgent extends http.Agent {}
+  Object.defineProperties(ProxyAgent.prototype, {
+    defaultPort: {
+      get: () => (insideHttps() ? 443 : 80),
+      set: () => undefined,
+    },
+    protocol: {
+      get: () => (insideHttps() ? 'https:' : 'http:'),
+      set: () => undefined,
+    },
+  });
+  return Object.assign(new ProxyAgent(), {
+    createConnection: () => connect(port, '127.0.0.1'),
+  });
+}
 /** The application: `handle` runs inside the one request it is sent. */
 async function application(
   handle: (request: http.IncomingMessage) => Promise<void>,
@@ -61,7 +90,8 @@ async function application(
 // to anything, or by its host alone, ignoring the port: a signed handoff
 // would reach a service the application never allowed. Also fails if one of
 // the ways Node takes a call's destination (a URL string, a URL, options,
-// both, a callback, `get`, `https`, a port Node falls back to) goes unsigned.
+// both, a callback, `get`, `https`, a port Node falls back to, a proxy
+// agent whose default port is a getter) goes unsigned.
 it("signs a call only for an allowed origin, by the call's actual destination", async () => {
   const target = allowed.origin;
   const { port } = allowed;
@@ -96,6 +126,9 @@ it("signs a call only for an allowed origin, by the call's actual destination", 
         path: '/default-port',
       }),
       http.request({ hostname: '127.0.0.1', agent, path: '/agent-port' }),
+      https.request('https://127.0.0.1/proxy-agent', {
+        agent: proxyAgent(port),
+      }),
       // Another port on the allowed host.
       http.request(`${elsewhere.origin}/other-port`),
       // Another host, whose Host header names the allowed origin.
@@ -132,6 +165,7 @@ it("signs a call only for an allowed origin, by the call's actual destination", 
     '/https': 'verified',
     '/default-port': 'verified',
     '/agent-port': 'verified',
+    '/proxy-agent': 'verified',
     '/other-port': 'missing',
     '/host-header': 'missing',
     '/get': 'verified',
@@ -172,5 +206,37 @@ it('never sends the CLI header on, even in headers Node writes at once', async (
     expect(allowed.seen.get(path)?.headers['x-agentrail-cli']).toBeUndefined();
     // Written before the SDK could add one: no handoff, never a half one.
     expect(allowed.seen.get(path)?.handoff).toBe('missing');
+  }
+});
+
+// Fails if someone drops the check on every ClientRequest Node builds: a
+// call made through a function bound before init never reaches the
+// wrappers, and would send a CLI's header and a handoff the server received
+// on to the next service.
+it("never sends the SDK's own headers on through a function bound before init", async () => {
+  await application(
+    async (request) => {
+      const forwarded = {
+        'x-agentrail-cli': String(request.headers['x-agentrail-cli']),
+        [TRACE_HANDOFF_HEADER]: 'a-handoff-this-server-received',
+      };
+      const made = unwrapped.request(`${allowed.origin}/unwrapped-request`, {
+        headers: forwarded,
+      });
+      made.end();
+      await answered(made);
+      await answered(
+        unwrapped.get(`${allowed.origin}/unwrapped-get`, {
+          headers: forwarded,
+        }),
+      );
+    },
+    { 'x-agentrail-cli': CLI_VALUE },
+  );
+  for (const path of ['/unwrapped-request', '/unwrapped-get']) {
+    const { headers } = allowed.seen.get(path) ?? {};
+    expect(headers).toBeDefined();
+    expect(headers?.['x-agentrail-cli']).toBeUndefined();
+    expect(headers?.[TRACE_HANDOFF_HEADER]).toBeUndefined();
   }
 });

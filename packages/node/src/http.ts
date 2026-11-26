@@ -85,6 +85,17 @@ function failed(span: Span, error: Error): void {
   span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
   span.recordException(error);
 }
+/** A property's value where it is a plain one, never a getter's. */
+function dataProperty(target: object | undefined, name: string): unknown {
+  let at: object | null | undefined = target;
+  while (at !== undefined && at !== null) {
+    const descriptor = Object.getOwnPropertyDescriptor(at, name);
+    if (descriptor !== undefined)
+      return 'value' in descriptor ? descriptor.value : undefined;
+    at = Object.getPrototypeOf(at) as object | null;
+  }
+  return undefined;
+}
 /** Node's own test for a URL argument (`internal/url` isURL). */
 function isUrl(input: unknown): input is URL {
   if (typeof input !== 'object' || input === null) return false;
@@ -288,6 +299,8 @@ export function installHttpCapture(
   const fetches = new WeakMap<object, Span>();
   const calls = new WeakMap<object, Call>();
   let installed = true;
+  /** While a wrapper is building its call: that ClientRequest is the wrapper's. */
+  let building = 0;
 
   /** A capture failure reaches `onError`, never the application's request. */
   function guard(run: () => void): void {
@@ -451,23 +464,27 @@ export function installHttpCapture(
     );
     let ended = false;
     response.once('close', () => {
-      if (ended) return;
-      ended = true;
-      const status = response.statusCode;
-      span.setAttribute('http.response.status_code', status);
-      span.setStatus({
-        code:
-          status >= 100 && status < 500
-            ? SpanStatusCode.UNSET
-            : SpanStatusCode.ERROR,
+      guard(() => {
+        if (ended) return;
+        ended = true;
+        const status = response.statusCode;
+        span.setAttribute('http.response.status_code', status);
+        span.setStatus({
+          code:
+            status >= 100 && status < 500
+              ? SpanStatusCode.UNSET
+              : SpanStatusCode.ERROR,
+        });
+        span.end();
       });
-      span.end();
     });
     response.on(errorMonitor, (error: Error) => {
-      if (ended) return;
-      ended = true;
-      failed(span, error);
-      span.end();
+      guard(() => {
+        if (ended) return;
+        ended = true;
+        failed(span, error);
+        span.end();
+      });
     });
     return trace.setSpan(base, span);
   }
@@ -542,36 +559,42 @@ export function installHttpCapture(
     });
   }
   function onUndiciHeaders(message: unknown): void {
-    const { request, response } = message as {
-      request: object;
-      response: { statusCode: number };
-    };
-    const span = fetches.get(request);
-    if (span === undefined) return;
-    span.setAttribute('http.response.status_code', response.statusCode);
-    span.setStatus({
-      code:
-        response.statusCode >= 400
-          ? SpanStatusCode.ERROR
-          : SpanStatusCode.UNSET,
+    guard(() => {
+      const { request, response } = message as {
+        request: object;
+        response: { statusCode: number };
+      };
+      const span = fetches.get(request);
+      if (span === undefined) return;
+      span.setAttribute('http.response.status_code', response.statusCode);
+      span.setStatus({
+        code:
+          response.statusCode >= 400
+            ? SpanStatusCode.ERROR
+            : SpanStatusCode.UNSET,
+      });
     });
   }
   function onUndiciDone(message: unknown): void {
-    const { request } = message as { request: object };
-    fetches.get(request)?.end();
-    fetches.delete(request);
+    guard(() => {
+      const { request } = message as { request: object };
+      fetches.get(request)?.end();
+      fetches.delete(request);
+    });
   }
   function onUndiciError(message: unknown): void {
-    const { request, error } = message as { request: object; error: Error };
-    const span = fetches.get(request);
-    if (span === undefined) return;
-    fetches.delete(request);
-    // An aborted request is not a failed one.
-    if (error.name !== 'AbortError') {
-      span.recordException(error);
-      span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
-    }
-    span.end();
+    guard(() => {
+      const { request, error } = message as { request: object; error: Error };
+      const span = fetches.get(request);
+      if (span === undefined) return;
+      fetches.delete(request);
+      // An aborted request is not a failed one.
+      if (error.name !== 'AbortError') {
+        span.recordException(error);
+        span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
+      }
+      span.end();
+    });
   }
 
   function outbound(
@@ -579,16 +602,24 @@ export function installHttpCapture(
     args: readonly unknown[],
     ctx: Context,
     startTime: ReturnType<typeof hrTime>,
+    defaultPort: number,
   ): void {
     const options = requestOptions(args);
     // Node's own choice of port, which a ClientRequest never shows; its
     // host, protocol, method and path are the ones it really uses. The Host
     // header, which the caller may set to anything, plays no part.
-    const agent = (request as { agent?: { defaultPort?: number } }).agent;
-    // As Node chooses: the first that is set and not 0 or ''.
+    const { agent } = request as { agent?: object };
+    // As Node chooses: the first that is set and not 0 or ''. An agent's
+    // default port counts only as a plain value: a proxy agent's (agent-base)
+    // is a getter that reads the call stack, and says 80 outside Node's own
+    // https code, so the module's default stands in for it.
+    const agentPort = dataProperty(agent, 'defaultPort');
     const port =
-      [options.port, options.defaultPort, agent?.defaultPort].find(Boolean) ??
-      80;
+      [
+        options.port,
+        options.defaultPort,
+        typeof agentPort === 'number' ? agentPort : undefined,
+      ].find(Boolean) ?? defaultPort;
     const host =
       request.host.includes(':') && !request.host.startsWith('[')
         ? `[${request.host}]`
@@ -622,15 +653,19 @@ export function installHttpCapture(
     const call: Call = { span, ended: false };
     calls.set(request, call);
     request.on('close', () => {
-      if (call.ended) return;
-      call.ended = true;
-      span.end();
+      guard(() => {
+        if (call.ended) return;
+        call.ended = true;
+        span.end();
+      });
     });
     request.on(errorMonitor, (error: Error) => {
-      if (call.ended) return;
-      call.ended = true;
-      failed(span, error);
-      span.end();
+      guard(() => {
+        if (call.ended) return;
+        call.ended = true;
+        failed(span, error);
+        span.end();
+      });
     });
     // Headers Node already wrote (an array of them, or `Expect`) are
     // past changing: that call goes without a handoff.
@@ -648,36 +683,54 @@ export function installHttpCapture(
   // Published when a response's headers arrive, before 'response' is
   // emitted. Listening there never changes who reads the body.
   function onResponse(message: unknown): void {
-    const { request, response } = message as {
-      request: object;
-      response: http.IncomingMessage;
-    };
-    const call = calls.get(request);
-    if (call === undefined) return;
-    const { span } = call;
-    const status = response.statusCode;
-    if (status !== undefined)
-      span.setAttribute('http.response.status_code', status);
-    response.on('end', () => {
-      if (call.ended) return;
-      call.ended = true;
-      // A response cut short ends in an error instead (`aborted`).
-      span.setStatus({
-        code:
-          status !== undefined && status >= 100 && status < 400
-            ? SpanStatusCode.UNSET
-            : SpanStatusCode.ERROR,
+    guard(() => {
+      const { request, response } = message as {
+        request: object;
+        response: http.IncomingMessage;
+      };
+      const call = calls.get(request);
+      if (call === undefined) return;
+      const { span } = call;
+      const status = response.statusCode;
+      if (status !== undefined)
+        span.setAttribute('http.response.status_code', status);
+      response.on('end', () => {
+        guard(() => {
+          if (call.ended) return;
+          call.ended = true;
+          // A response cut short ends in an error instead (`aborted`).
+          span.setStatus({
+            code:
+              status !== undefined && status >= 100 && status < 400
+                ? SpanStatusCode.UNSET
+                : SpanStatusCode.ERROR,
+          });
+          span.end();
+        });
       });
-      span.end();
-    });
-    response.on(errorMonitor, (error: Error) => {
-      if (call.ended) return;
-      call.ended = true;
-      failed(span, error);
-      span.end();
+      response.on(errorMonitor, (error: Error) => {
+        guard(() => {
+          if (call.ended) return;
+          call.ended = true;
+          failed(span, error);
+          span.end();
+        });
+      });
     });
   }
-  function wrap(original: Request): Request {
+  // Published as Node finishes building any ClientRequest. A call made with
+  // a function bound before init (a named import under an ESM loader, which
+  // never sees the wrappers) is caught here: its port is unknown, so it is
+  // neither recorded nor signed, but the SDK's own headers never go on.
+  function onRequestCreated(message: unknown): void {
+    guard(() => {
+      const { request } = message as { request: http.ClientRequest };
+      if (building > 0 || request.headersSent || managed() === undefined)
+        return;
+      for (const name of ownHeaders) request.removeHeader(name);
+    });
+  }
+  function wrap(original: Request, defaultPort: number): Request {
     return function request(this: unknown, ...args) {
       const ctx = installed ? managed() : undefined;
       if (ctx === undefined) return original.apply(this, args);
@@ -686,9 +739,15 @@ export function installHttpCapture(
       guard(() => {
         sent = withoutOwnHeaders(args);
       });
-      const created = original.apply(this, sent as unknown[]);
+      let created: http.ClientRequest;
+      building++;
+      try {
+        created = original.apply(this, sent as unknown[]);
+      } finally {
+        building--;
+      }
       guard(() => {
-        outbound(created, sent, ctx, startTime);
+        outbound(created, sent, ctx, startTime, defaultPort);
       });
       return created;
     };
@@ -696,6 +755,7 @@ export function installHttpCapture(
 
   const subscriptions: [string, (message: unknown) => void][] = [
     ['http.server.request.start', onRequestStart],
+    ['http.client.request.created', onRequestCreated],
     ['http.client.response.finish', onResponse],
     ['undici:request:create', onUndiciCreate],
     ['undici:request:headers', onUndiciHeaders],
@@ -704,10 +764,15 @@ export function installHttpCapture(
   ];
   for (const [name, listener] of subscriptions)
     diagnostics.subscribe(name, listener);
-  const restores = [http, https].map((module) => {
+  const restores = (
+    [
+      [http, 80],
+      [https, 443],
+    ] as const
+  ).map(([module, defaultPort]) => {
     const request = module.request as Request;
     const get = module.get as Request;
-    const wrapped = wrap(request);
+    const wrapped = wrap(request, defaultPort);
     // Node's get calls its own request, never the exported one.
     const wrappedGet: Request = function (this: unknown, ...args) {
       const created = wrapped.apply(this, args);

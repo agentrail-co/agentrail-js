@@ -10,8 +10,8 @@ when an agent or a person reaches it: the requests it answers and the HTTP and
 you name, your logs and your MCP tool calls. [Agentrail](https://www.agentrail.co)
 links these steps with the ones your edge and pages record, into one journey.
 
-What leaves your process is each step's facts: a request's method, route,
-status, user agent and URL (its query dropped, but for Agentrail's own
+What leaves your process is each step's facts: a request's method, status,
+user agent and URL (its query dropped, but for Agentrail's own
 markers); an MCP call's method, tool or prompt name, resource URI (without its
 userinfo, query or fragment), the client's self-reported name and version,
 message sizes, JSON-RPC id and error code, and, for a call that came over
@@ -89,25 +89,39 @@ client.
 
 The setup above is the same when your server already runs Sentry, Datadog
 (`dd-trace`) or its own OpenTelemetry setup, and you change nothing in it.
-Which starts first does not matter to Agentrail; `dd-trace` asks to be
-loaded before anything else, and that works too.
+Which starts first does not matter to Agentrail (`dd-trace` asks to be
+loaded before anything else, and that works too), with one exception: under
+an ESM loader hook (import-in-the-middle, which OpenTelemetry's
+auto-instrumentations and `dd-trace`'s `initialize.mjs` register), a
+function imported by name, as in `import { request } from 'node:https'`, is
+the one from before `init`. Agentrail does not record a call made through
+it or sign it for your `outboundOrigins`. On Node 22.12 and later it still
+takes its own headers off that call; on earlier versions it does not. Calls
+through the module (`https.request`) and `fetch` are not affected.
 
 - Agentrail keeps its own tracer and its own record of the request it is
   answering. It registers no OpenTelemetry global (tracer provider, context
-  manager, propagator or logger provider) and never reads or changes yours,
-  so your spans stay in your trace, under your server span, sampled and
-  exported as before.
+  manager, propagator or logger provider) and changes none of yours, so
+  your spans stay in your trace, under your server span, sampled and
+  exported as before. It reads your active span in one place only: a
+  milestone recorded outside a request links to it. Its own exports run
+  under OpenTelemetry's suppress flag in your context manager, so your
+  instrumentation leaves them out. Your `OTEL_*` environment settings do
+  not apply to them.
 - The calls your server makes keep your tracer's headers (`traceparent`,
   `tracestate`, `baggage`, `sentry-trace`, `x-datadog-*`). Agentrail takes
   off only its own: the handoff it signs (`x-agentrail-trace-handoff`) and a
   CLI's `x-agentrail-cli`, which are meant for this server alone.
 - On a call to one of your `outboundOrigins`, Agentrail sends its signed
   `traceparent` in place of yours, and leaves out your `tracestate`, which
-  belonged to it. Your tracer's other headers go as they are, but your trace
-  for that one call continues downstream under Agentrail's trace ID.
+  belonged to it. Your tracer's other headers go as they are, so Sentry
+  (`sentry-trace`) and Datadog (`x-datadog-*`) keep their own trace on that
+  call. A tracer that propagates by W3C `traceparent` alone continues that
+  one call downstream under Agentrail's trace ID.
 - Agentrail does not send your own spans (database calls and the like) or
   records written with the OpenTelemetry Logs API. Send logs with
-  `agentrail.log` or the Pino hooks below.
+  `agentrail.log` or the Pino hooks in `agentrail-node/pino`, both in
+  [Install the Node SDK](https://www.agentrail.co/docs/guides/journeys-node).
 
 ## MCP servers
 
@@ -217,7 +231,8 @@ option are gone: where you wired Agentrail's processors, sampler,
 propagator and HTTP options into your own OpenTelemetry setup, remove that
 wiring and call `init` instead. `init` no longer refuses to start when
 another tracer provider, context manager, propagator or logger provider is
-installed.
+installed. A request's step no longer carries `http.route`, which a
+framework's OpenTelemetry instrumentation could set on it in 0.4.
 
 ## Licence
 

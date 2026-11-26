@@ -140,14 +140,17 @@ it("signs a call only for an allowed origin, by the call's actual destination", 
       call.end();
       await answered(call);
     }
-    for (const call of [
-      http.get(`${target}/get`),
-      http.get({ hostname: '127.0.0.1', port, path: '/get-options' }),
-      https.get(`https://127.0.0.1:${String(port)}/https-get`, {
-        createConnection: tunnel,
-      }),
-    ])
-      await answered(call);
+    // A get is sent as it is made: each is waited on from the start, or
+    // its response could come before the wait does.
+    await Promise.all(
+      [
+        http.get(`${target}/get`),
+        http.get({ hostname: '127.0.0.1', port, path: '/get-options' }),
+        https.get(`https://127.0.0.1:${String(port)}/https-get`, {
+          createConnection: tunnel,
+        }),
+      ].map((call) => answered(call)),
+    );
   });
   const handoffs = Object.fromEntries(
     [...allowed.seen, ...elsewhere.seen].map(([path, call]) => [

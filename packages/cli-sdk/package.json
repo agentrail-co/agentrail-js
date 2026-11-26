@@ -1,6 +1,6 @@
 {
   "name": "agentrail-cli-sdk",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Agentrail for a CLI: tells your own API which command an agent ran, in which run and session, so the agent's CLI calls join its journey.",
   "license": "Apache-2.0",
   "repository": {

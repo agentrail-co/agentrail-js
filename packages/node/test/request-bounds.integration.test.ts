@@ -1,9 +1,10 @@
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { expect, it } from 'vitest';
-import { init, createProcessors, ConfigurationError } from '../src/index.js';
+import { init, ConfigurationError } from '../src/index.js';
 import { collector, attributesOf } from './support/collector.js';
 import { options } from './support/options.js';
+import { createTestSdk } from './support/sdk.js';
 
 // Fails if oversized optional URL evidence can exceed the receiver's 4096-character contract and poison adjacent spans.
 it('keeps entries but omits oversized URLs before batching unrelated requests', async () => {
@@ -59,7 +60,7 @@ it.each(['serviceName', 'serviceInstanceId'] as const)(
   'rejects oversized %s at construction',
   (field) => {
     expect(() =>
-      createProcessors({
+      createTestSdk({
         ...options('http://127.0.0.1:1/ingest/otlp'),
         [field]: 'a'.repeat(4097),
       }),

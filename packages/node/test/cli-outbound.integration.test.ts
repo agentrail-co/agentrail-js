@@ -1,7 +1,6 @@
 import { once } from 'node:events';
 import { createServer, request as httpRequest } from 'node:http';
 
-import { SpanKind, trace } from '@opentelemetry/api';
 import { CLI_HEADER_CONTRACT } from 'agentrail-contract';
 import { expect, it } from 'vitest';
 
@@ -26,10 +25,9 @@ function send(
   });
 }
 
-// Fails if someone copies a CLI's facts onto every server span of the
-// request, or lets the server send the header on: a library's own server
-// span inside the request would be a second CLI step, and the next service
-// would learn the CLI's run and session though the CLI never listed it.
+// Fails if someone copies a CLI's facts onto the calls the server makes,
+// or lets the server send the header on: the next service would learn the
+// CLI's run and session though the CLI never listed it.
 it("keeps a CLI's header to the request's own span, and off the calls its server makes", async () => {
   const sink = await collector();
   const sdk = await init({
@@ -54,14 +52,8 @@ it("keeps a CLI's header to the request's own span, and off the calls its server
       const value = request.headers['x-agentrail-cli'];
       const forwarded =
         typeof value === 'string' ? { 'x-agentrail-cli': value } : {};
-      // A library's own server span inside the request, as an RPC layer opens one.
-      await trace
-        .getTracer('a-library')
-        .startActiveSpan('inner', { kind: SpanKind.SERVER }, async (inner) => {
-          await fetch(`${downOrigin}/fetched`, { headers: forwarded });
-          await send(`${downOrigin}/requested`, forwarded);
-          inner.end();
-        });
+      await fetch(`${downOrigin}/fetched`, { headers: forwarded });
+      await send(`${downOrigin}/requested`, forwarded);
       response.end('{}');
     })();
   });

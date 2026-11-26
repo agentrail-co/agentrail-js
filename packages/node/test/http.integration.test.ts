@@ -46,7 +46,8 @@ async function get(url: string, headers: Record<string, string> = {}) {
   );
 }
 describe('standalone HTTP/fetch installation', () => {
-  // Fails if ingress trusts a public parent, a signature skips target binding, or concurrent identities leak.
+  // Fails if ingress trusts a public parent, a signature skips target binding,
+  // concurrent identities leak, or a received handoff is sent on.
   it('continues only signed requests, isolates callers and propagates only to exact destinations', async () => {
     const sink = await collector();
     const failures: Error[] = [];
@@ -250,13 +251,17 @@ describe('standalone HTTP/fetch installation', () => {
       ).toBe(true);
       expect(received[0]?.traceparent).toBeDefined();
       expect(received[0]?.[TRACE_HANDOFF_HEADER]).toBeDefined();
-      expect(received[0]?.baggage).toBeUndefined();
+      // The application's own headers go on; its tracestate went with the
+      // traceparent the signed one replaced.
+      expect(received[0]?.baggage).toBe('private=hidden');
       expect(received[0]?.tracestate).toBeUndefined();
       expect(received[1]?.host).toBe('forged.invalid');
       expect(received[1]?.[TRACE_HANDOFF_HEADER]).toBeDefined();
-      expect(blockedHeaders[0]?.traceparent).toBeUndefined();
+      expect(received[1]?.baggage).toBe('private=hidden');
+      // Elsewhere only the handoff the server received is taken off.
+      expect(blockedHeaders[0]?.traceparent).toBe(parent);
       expect(blockedHeaders[0]?.[TRACE_HANDOFF_HEADER]).toBeUndefined();
-      expect(blockedHeaders[0]?.baggage).toBeUndefined();
+      expect(blockedHeaders[0]?.baggage).toBe('private=hidden');
       expect(failures).toHaveLength(2);
       expect(failures).toContainEqual(
         expect.objectContaining({ code: 'location_failed' }),

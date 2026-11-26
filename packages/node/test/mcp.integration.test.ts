@@ -2,9 +2,6 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from '@modelcontextprotocol/client';
-import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
-import { context, trace } from '@opentelemetry/api';
-import { TracerProvider } from '@opentelemetry/sdk-trace';
 import {
   McpServer,
   createMcpHandler,
@@ -14,26 +11,16 @@ import {
   type ToolCallback,
 } from '@modelcontextprotocol/server';
 import { describe, expect, it } from 'vitest';
-import { createProcessors } from '../src/index.js';
 import { mcp } from '../src/mcp.js';
 import { collector, attributesOf } from './support/collector.js';
 import { options } from './support/options.js';
+import { createTestSdk } from './support/sdk.js';
 
 // Fails if MCP metadata becomes verified identity, request contexts mix, or arguments/results are exported.
 describe('MCP 2.3 request callbacks', () => {
   it('captures real protocol calls and keeps self-reported client metadata separate from identity', async () => {
     const sink = await collector();
-    const sdk = createProcessors(options(sink.endpoint));
-    const provider = new TracerProvider({
-      sampler: sdk.sampler({
-        shouldSample: () => ({ decision: 2 }),
-        toString: () => 'always',
-      }),
-      spanProcessors: [sdk.spanProcessor],
-    });
-    const manager = new AsyncLocalStorageContextManager().enable();
-    expect(context.setGlobalContextManager(manager)).toBe(true);
-    expect(trace.setGlobalTracerProvider(provider)).toBe(true);
+    const sdk = createTestSdk(options(sink.endpoint));
     const handler = createMcpHandler(
       () => {
         const server = new McpServer({
@@ -279,10 +266,6 @@ describe('MCP 2.3 request callbacks', () => {
     } finally {
       await handler.close();
       await sdk.client.shutdown();
-      await provider.shutdown();
-      manager.disable();
-      context.disable();
-      trace.disable();
       await sink.close();
     }
   });

@@ -1,4 +1,4 @@
-import { context, createContextKey, SpanStatusCode } from '@opentelemetry/api';
+import { createContextKey, SpanStatusCode } from '@opentelemetry/api';
 import type { Context, Span } from '@opentelemetry/api';
 import type {
   McpHandlerRequestOptions,
@@ -11,6 +11,7 @@ import type { AgentrailNode } from './client.js';
 import { MCP_PAYLOAD_BYTES } from './limits.js';
 import { CaptureError } from './options.js';
 import { boundedText } from './privacy.js';
+import { ours } from './context.js';
 import { internalOf, type McpFacts, type McpRequestFacts } from './runtime.js';
 
 /** One MCP call as the redact hook sees it, before anything leaves the process. */
@@ -327,13 +328,13 @@ export function mcp(options: McpCaptureOptions) {
   /**
    * What the HTTP request that carried a message says of itself. Its header
    * names as Node's HTTP server received them, in their order and case,
-   * where the SDK's HTTP instrumentation saw the request being answered;
-   * otherwise as the Fetch `Headers` hold them, lower-cased and sorted.
+   * where `init`'s HTTP capture saw the request being answered; otherwise
+   * as the Fetch `Headers` hold them, lower-cased and sorted.
    */
   function requestFactsOf(request: Request): McpRequestFacts {
     const { headers } = request;
     const names = joinedNames(
-      runtime.state(context.active())?.headerNames ?? headers.keys(),
+      runtime.state(ours.active())?.headerNames ?? headers.keys(),
     );
     const userAgent = headers.get('user-agent');
     const accept = headers.get('accept');
@@ -507,7 +508,7 @@ export function mcp(options: McpCaptureOptions) {
       const key = idKey(call.id);
       if (key === undefined) {
         try {
-          context.with(call.ctx, deliver);
+          ours.with(call.ctx, deliver);
         } finally {
           finish(call, undefined, inner.sessionId);
           // A request the client gave up on gets no response.
@@ -524,7 +525,7 @@ export function mcp(options: McpCaptureOptions) {
         return;
       }
       pending.set(key, call);
-      context.with(call.ctx.setValue(callsKey, pending), deliver);
+      ours.with(call.ctx.setValue(callsKey, pending), deliver);
     };
     const send: Transport['send'] = (message, sendOptions) => {
       const sent = message as unknown as Message;
@@ -708,13 +709,13 @@ export function mcp(options: McpCaptureOptions) {
         if (key !== undefined) byId.set(key, call);
       }
       // One message runs under its span; a batch's handlers find theirs by id.
-      const ctx = (calls.length === 1 ? only.ctx : context.active()).setValue(
+      const ctx = (calls.length === 1 ? only.ctx : ours.active()).setValue(
         callsKey,
         byId,
       );
       let response: Response;
       try {
-        response = await context.with(ctx, () =>
+        response = await ours.with(ctx, () =>
           inner.fetch(request, requestOptions),
         );
       } catch (error) {
@@ -737,14 +738,14 @@ export function mcp(options: McpCaptureOptions) {
     return (...args) => {
       // All supported registration callbacks receive ServerContext as their final argument.
       const ctx = args.at(-1) as ServerContext;
-      const calls = context.active().getValue(callsKey) as
+      const calls = ours.active().getValue(callsKey) as
         ReadonlyMap<string, Call> | undefined;
       const key = idKey(ctx.mcpReq.id);
       const parent = key === undefined ? undefined : calls?.get(key);
       const kind = kindOf(method);
       if (parent !== undefined)
         // The transport span is the call; this is the work inside it.
-        return context.with(parent.ctx, () =>
+        return ours.with(parent.ctx, () =>
           run(
             internal.start(
               spanName(method, name),
@@ -794,7 +795,7 @@ export function mcp(options: McpCaptureOptions) {
     parent?: Call,
   ): Promise<Result> {
     const { span } = started;
-    return context.with(started.ctx, async () => {
+    return ours.with(started.ctx, async () => {
       try {
         const result = await callback();
         if (record(result)?.isError === true) {

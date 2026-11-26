@@ -162,9 +162,10 @@ function parsedToken(token: string) {
 }
 
 /**
- * Unverified candidate only. Node's synchronous OTel propagator checks its MAC
- * with node:crypto; other runtimes use verifyTraceHandoff below. Never continue
- * a trace from this result until the signature over bytes has been verified.
+ * Unverified candidate only. The Node SDK checks its MAC with node:crypto,
+ * synchronously, as a request arrives; other runtimes use verifyTraceHandoff
+ * below. Never continue a trace from this result until the signature over
+ * bytes has been verified.
  */
 export function readTraceHandoff(
   token: string | null,

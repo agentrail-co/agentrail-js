@@ -5,7 +5,8 @@ import {
   trace,
   SpanStatusCode,
 } from '@opentelemetry/api';
-import type { Context } from '@opentelemetry/api';
+import type { Context, Tracer } from '@opentelemetry/api';
+import { ours } from './context.js';
 import {
   CaptureError,
   ConfigurationError,
@@ -36,11 +37,15 @@ export interface AgentrailNode {
 export function createClient(
   runtime: Runtime,
   queues: ReturnType<typeof processors>,
+  /** The SDK's own tracer, never the application's global one. */
+  tracer: Tracer,
 ): AgentrailNode {
   function parent(): Context {
-    const active = context.active();
+    const active = ours.active();
     if (runtime.state(active) !== undefined) return active;
-    const external = trace.getSpanContext(active);
+    // Outside a request, a milestone inside the application's own span
+    // links to it; that span is only read, and stays the current one.
+    const external = trace.getSpanContext(context.active());
     return ROOT_CONTEXT.setValue(
       runtime.stateKey,
       runtime.newState(
@@ -92,7 +97,7 @@ export function createClient(
       ...extra,
     });
     const state = runtime.state(base);
-    const span = trace.getTracer('agentrail-node').startSpan(
+    const span = tracer.startSpan(
       name,
       {
         links:
@@ -100,7 +105,7 @@ export function createClient(
       },
       marked,
     );
-    if (!span.isRecording() && !isCaptureSuppressed(context.active()))
+    if (!span.isRecording() && !isCaptureSuppressed(ours.active()))
       runtime.options.report(
         new CaptureError('entry_not_recording', 'traces', 1),
       );
@@ -122,7 +127,7 @@ export function createClient(
       span.end();
       return;
     }
-    return context.with(ctx, async () => {
+    return ours.with(ctx, async () => {
       try {
         return await run();
       } catch (error) {
@@ -138,7 +143,7 @@ export function createClient(
     identify(identity) {
       if (identity.id.length === 0 || identity.actingUserId === '')
         throw new ConfigurationError('Verified identity IDs cannot be empty.');
-      const state = runtime.state(context.active());
+      const state = runtime.state(ours.active());
       if (state === undefined) {
         runtime.options.report(
           new CaptureError('identity_outside_request', 'context', 1),
@@ -159,8 +164,8 @@ export function createClient(
     },
     milestone,
     log(input) {
-      if (isCaptureSuppressed(context.active())) return;
-      const record = makeLog(input, context.active(), runtime);
+      if (isCaptureSuppressed(ours.active())) return;
+      const record = makeLog(input, ours.active(), runtime);
       if (record !== undefined) queues.logs.add(record);
     },
     async flush() {

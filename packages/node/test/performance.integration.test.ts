@@ -1,12 +1,10 @@
 import { createHmac, createHash } from 'node:crypto';
-import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
-import { context, trace } from '@opentelemetry/api';
-import { TracerProvider } from '@opentelemetry/sdk-trace';
 import { OTLP } from 'agentrail-contract';
 import { expect, it } from 'vitest';
-import { createProcessors, type PerformanceContext } from '../src/index.js';
+import type { PerformanceContext } from '../src/index.js';
 import { attributesOf, collector } from './support/collector.js';
 import { options, HASH_KEY } from './support/options.js';
+import { createTestSdk } from './support/sdk.js';
 const namespaceId = '11111111-1111-4111-8111-111111111111';
 const bindingId = '22222222-2222-4222-8222-222222222222';
 const privateCanary = 'synthetic-private-operation-attempt';
@@ -16,11 +14,7 @@ const privateRef = `${privateCanary}\u0000`;
 // inherit from unrelated spans, or silently turn an invocation into an outcome.
 it('exports explicit authorized operation evidence over OTLP without raw references or arguments', async () => {
   const sink = await collector();
-  const sdk = createProcessors(options(sink.endpoint));
-  const provider = new TracerProvider({ spanProcessors: [sdk.spanProcessor] });
-  const manager = new AsyncLocalStorageContextManager().enable();
-  context.setGlobalContextManager(manager);
-  trace.setGlobalTracerProvider(provider);
+  const sdk = createTestSdk(options(sink.endpoint));
   const performance: PerformanceContext = {
     environment: 'production',
     operation: { namespaceId, instanceRef: privateRef, role: 'start' },
@@ -31,12 +25,7 @@ it('exports explicit authorized operation evidence over OTLP without raw referen
     await sdk.client.milestone(
       'delivery.requested',
       { surface: 'custom', kind: 'business.event', performance },
-      () => {
-        const child = provider.getTracer('customer').startSpan('untrusted');
-        child.setAttribute('agentrail.operation.hash', privateRef);
-        child.setAttribute('tool.arguments', privateRef);
-        child.end();
-      },
+      () => undefined,
     );
     sdk.client.milestone('delivery.completed', {
       surface: 'custom',
@@ -118,11 +107,6 @@ it('exports explicit authorized operation evidence over OTLP without raw referen
     });
     expect(standalone).not.toHaveProperty(['agentrail.operation.hash']);
     expect(standalone).not.toHaveProperty(['agentrail.workflow.role']);
-    expect(
-      attributesOf(
-        spans.find((span) => span.name === 'backend.operation')?.attributes,
-      ),
-    ).not.toHaveProperty(['agentrail.operation.hash']);
     expect(JSON.stringify(spans)).not.toContain(privateCanary);
     expect(sink.resources()).toContainEqual(
       expect.objectContaining({
@@ -134,10 +118,6 @@ it('exports explicit authorized operation evidence over OTLP without raw referen
     );
   } finally {
     await sdk.client.shutdown();
-    await provider.shutdown();
-    manager.disable();
-    context.disable();
-    trace.disable();
     await sink.close();
   }
 });
@@ -146,14 +126,10 @@ it('exports explicit authorized operation evidence over OTLP without raw referen
 it('reports invalid evidence while preserving customer execution and unrelated OTLP spans', async () => {
   const sink = await collector();
   const errors: import('../src/options.js').CaptureError[] = [];
-  const sdk = createProcessors({
+  const sdk = createTestSdk({
     ...options(sink.endpoint),
     onError: (error) => errors.push(error),
   });
-  const provider = new TracerProvider({ spanProcessors: [sdk.spanProcessor] });
-  const manager = new AsyncLocalStorageContextManager().enable();
-  context.setGlobalContextManager(manager);
-  trace.setGlobalTracerProvider(provider);
   const invalid: PerformanceContext[] = [
     {
       environment: 'production',
@@ -230,10 +206,6 @@ it('reports invalid evidence while preserving customer execution and unrelated O
     }
   } finally {
     await sdk.client.shutdown();
-    await provider.shutdown();
-    manager.disable();
-    context.disable();
-    trace.disable();
     await sink.close();
   }
 });
